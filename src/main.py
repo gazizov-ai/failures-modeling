@@ -148,7 +148,7 @@ class FailureSimulator:
                                     fill='white', tags=f'node_{node.id}')
 
             # Input point
-            in_id = f"i{node.typeid}0"
+            in_id = f"{node.typeid}0"
             self.canvas.create_oval(x - 45, y - 5, x - 35, y + 5,
                                     tags=f'in_{in_id}', fill='green')
 
@@ -164,8 +164,8 @@ class FailureSimulator:
 
             for i in range(6):
                 y_offset = -40 + i * 15
-                in_id = f"i{node.typeid}{i}"
-                out_id = f"{node.typeid}{i}"
+                in_id = f"{node.typeid}{i + 1}"
+                out_id = f"{node.typeid}{i + 1}"
 
                 # Input point
                 self.canvas.create_oval(x - 45, y + y_offset - 5, x - 35, y + y_offset + 5,
@@ -362,7 +362,7 @@ class FailureSimulator:
 
         # Move input points based on node type
         if node.type == 'output':
-            in_id = f"{node.typeid}"  # Correct format for output node input point
+            in_id = f"{node.typeid}0"  # Correct format for output node input point
             for item in self.canvas.find_withtag(f'in_{in_id}'):
                 self.canvas.move(item, dx, dy)
             for item in self.canvas.find_withtag(f'in_{in_id}_text'):
