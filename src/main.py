@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, PhotoImage
 import networkx as nx
 import numpy as np
+from networkx import nodes
 
 
 class Node:
@@ -53,41 +54,42 @@ class FailureSimulator:
         # Configure root window to be resizable
         self.root.geometry("1000x800")
         self.root.minsize(800, 600)
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
 
-        # Main container with grid
-        main_frame = ttk.Frame(self.root)
-        main_frame.grid(row=0, column=0, sticky="nsew")
-        main_frame.grid_rowconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(0, weight=9)  # 90% for canvas
-        main_frame.grid_columnconfigure(1, weight=1)  # 10% for buttons
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
 
-        # Canvas setup - 90% width
-        self.canvas = tk.Canvas(main_frame, bg='#DDDDDD', bd=1, relief='solid')
-        self.canvas.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        nodes_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Узлы', menu=nodes_menu)
 
-        # Control frame - 10% width
-        control_frame = ttk.Frame(main_frame)
-        control_frame.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
-        control_frame.grid_rowconfigure(3, weight=1)  # Extra space at bottom
+        add_menu = tk.Menu(nodes_menu, tearoff=0)
+        nodes_menu.add_cascade(label='Добавить...', menu=add_menu)
+        add_menu.add_command(label='Входной узел', command=self.add_input_node, accelerator="Ctrl+Q")
+        add_menu.add_command(label='Агрегат', command=self.add_aggregate, accelerator="Ctrl+W")
+        add_menu.add_command(label='Выходной узел', command=self.add_output_node, accelerator="Ctrl+E")
+        nodes_menu.add_command(label='Удалить')
+
+        fail_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Моделирование отказов', menu=fail_menu)
+        fail_menu.add_command(label='Добавить отказ на узле', command=self.set_failure)
+
+        graph_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Графы', menu=graph_menu)
+        graph_menu.add_command(label='Матрица смежности', command=self.add_input_node)
+        graph_menu.add_command(label='Меры важности узлов', command=self.add_aggregate)
+        graph_menu.add_command(label='Дерево отказов FTA', command=self.add_output_node)
+        graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.add_output_node)
+
+        self.canvas = tk.Canvas(self.root, bg='#DDDDDD', bd=1, relief='solid')
+        self.canvas.pack(fill=tk.BOTH, expand=True)
 
         self.canvas.bind("<Button-1>", self.canvas_click)
         # self.canvas.bind("<Button-3>", self.delete_node)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.drag_stop)
+        self.root.bind("<Control-q>", lambda e: self.add_input_node())
+        self.root.bind("<Control-w>", lambda e: self.add_output_node())
+        self.root.bind("<Control-e>", lambda e: self.add_aggregate())
 
-
-        ttk.Button(control_frame, text="Добавить входной узел",
-                   command=self.add_input_node).pack(pady=5)
-        ttk.Button(control_frame, text="Добавить выходной узел",
-                   command=self.add_output_node).pack(pady=5)
-        ttk.Button(control_frame, text="Добавить агрегат",
-                   command=self.add_aggregate).pack(pady=5)
-        ttk.Button(control_frame, text="Добавить отказ на узле",
-                   command=self.set_failure).pack(pady=5)
-        ttk.Button(control_frame, text="Матрица смежности",
-                   command=self.show_adjacency_matrix).pack(pady=5)
 
     def create_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius, **kwargs):
         points = [
@@ -108,6 +110,7 @@ class FailureSimulator:
         return canvas.create_polygon(points, smooth=True, **kwargs)
 
     def draw_node(self, node):
+        last_x = 100
         last_y = 300  # Default y position
         for existing_node in self.nodes[:-1]:  # Exclude current node
             if existing_node.type == node.type and existing_node.typeid < node.typeid:
@@ -142,7 +145,7 @@ class FailureSimulator:
             out_id = f"0{node.typeid}"
             self.canvas.create_oval(x + 35, y - 5, x + 45, y + 5,
                                     tags=[f'out_{out_id}', f'point_of_{node.id}'], fill='red')
-            self.canvas.create_text(x + 50, y, text=out_id,
+            self.canvas.create_text(x + 48, y - 10, text=out_id,
                                     fill='black', font=('Arial', 10), tags=f'out_{out_id}_text')
 
         elif node.type == 'output':
@@ -272,8 +275,8 @@ class FailureSimulator:
             line_coords = [start_x, start_y, end_x, end_y]
             self.canvas.create_line(line_coords, fill='orange', width=2,
                                     tags=f'internal_conn_in_{self.get_node_by_point(point1).id}_{out_point}_{in_point}')
-
             return
+
         if not self.parse_connection_tags(in_point):
             self.connections.append((out_point, in_point))
             print(self.connections)
