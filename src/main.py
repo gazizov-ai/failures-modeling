@@ -372,13 +372,12 @@ class FailureSimulator:
                 return
 
     def update_connections(self, node):
-        # Update all connections where this node is involved
         for conn in self.connections:
             start_point, end_point = conn
 
             # Check if this connection involves the moved node
-            if (any(start_point == f"{node.id}{i}" for i in range(7)) or
-                    any(end_point == f"i{node.id}{i}" for i in range(7))):
+            if (any(start_point == f"{node.id}{i}" for i in range(15)) or
+                    any(end_point == f"{node.id}{i}" for i in range(7))):
                 # Delete old connection line
                 self.canvas.delete(f'conn_{start_point}_{end_point}')
 
@@ -412,14 +411,14 @@ class FailureSimulator:
 
         # Move input points based on node type
         if node.type == 'output':
-            in_id = f"{node.typeid}0"  # Correct format for output node input point
+            in_id = f"{node.typeid}0"
             for item in self.canvas.find_withtag(f'in_{in_id}'):
                 self.canvas.move(item, dx, dy)
             for item in self.canvas.find_withtag(f'in_{in_id}_text'):
                 self.canvas.move(item, dx, dy)
         elif node.type == 'aggregate':
             for i in range(6):
-                in_id = f"{node.typeid}{i + 7}"  # Correct format for aggregate input points
+                in_id = f"{node.typeid}{i + 7}"
                 for item in self.canvas.find_withtag(f'in_{in_id}'):
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'in_{in_id}_text'):
