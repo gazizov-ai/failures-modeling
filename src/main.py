@@ -44,6 +44,7 @@ class FailureSimulator:
         self.connection_mode = False
         self.connection_start = None
         self.selected_node = None
+        self.selected_point_type = None
         self.drag_data = {"x": 0, "y": 0, "item": None}
 
         self.setup_gui()
@@ -129,7 +130,7 @@ class FailureSimulator:
             # Output point with black index
             out_id = f"0{node.typeid}"
             self.canvas.create_oval(x + 35, y - 5, x + 45, y + 5,
-                                    tags=f'out_{out_id}', fill='red')
+                                    tags=[f'out_{out_id}', f'point_of_{node.id}'], fill='red')
             self.canvas.create_text(x + 50, y, text=out_id,
                                     fill='black', font=('Arial', 10), tags=f'out_{out_id}_text')
 
@@ -146,7 +147,7 @@ class FailureSimulator:
             # Input point
             in_id = f"{node.typeid}0"
             self.canvas.create_oval(x - 45, y - 5, x - 35, y + 5,
-                                    tags=f'in_{in_id}', fill='green')
+                                    tags=[f'in_{in_id}', f'point_of_{node.id}'], fill='green')
 
         else:  # Aggregate
             self.create_rounded_rectangle(self.canvas, x - 40, y - 60, x + 40, y + 60,
@@ -160,16 +161,15 @@ class FailureSimulator:
 
             for i in range(6):
                 y_offset = -40 + i * 15
-                in_id = f"{node.typeid}{i + 1}"
+                in_id = f"{node.typeid}{i + 7}"
                 out_id = f"{node.typeid}{i + 1}"
 
                 # Input point
                 self.canvas.create_oval(x - 45, y + y_offset - 5, x - 35, y + y_offset + 5,
-                                        tags=f'in_{in_id}', fill='green')
+                                        tags=[f'in_{in_id}', f'point_of_{node.id}'], fill='green')
 
-                # Output point with black index
                 self.canvas.create_oval(x + 35, y + y_offset - 5, x + 45, y + y_offset + 5,
-                                        tags=f'out_{out_id}', fill='red')
+                                        tags=[f'out_{out_id}', f'point_of_{node.id}'], fill='red')
                 self.canvas.create_text(x + 50, y + y_offset, text=out_id,
                                         fill='black', font=('Arial', 10), tags=f'out_{out_id}_text')
 
@@ -198,8 +198,9 @@ class FailureSimulator:
             return
 
         for tag in tags:
-            if tag.startswith('out_') or tag.startswith('in_'):
+            if (tag.startswith('out_') or tag.startswith('in_')) and not tag.endswith('_text'):
                 point_id = tag[4:] if tag.startswith('out_') else tag[3:]
+                point_type = 'out' if tag.startswith('out_') else 'in'
                 clicked_node = self.get_node_by_point(point_id)
 
                 # Handle clicks inside aggregate
@@ -212,31 +213,38 @@ class FailureSimulator:
                         self.connection_mode = True
                         self.connection_start = point_id
                         self.root.config(cursor="cross")
-                    return
 
-                # Handle regular connections between nodes
-                if not self.connection_mode:
-                    if tag.startswith('out_'):
-                        self.connection_mode = True
-                        self.connection_start = point_id
-                        self.root.config(cursor="cross")
-                else:
-                    if tag.startswith('in_'):
-                        if not any(conn[1] == point_id for conn in self.connections):
-                            self.create_new_connection(point_id, self.connection_start)
+                    if not self.connection_mode:
+                        self.start_connection(point_id)
+                    else:
+                        # if not self.parse_connection_tags(point_id):
+                        #     self.create_new_connection(point_id, self.connection_start)
                         self.connection_mode = False
                         self.connection_start = None
                         self.root.config(cursor="")
+                    return
+
+                if not self.connection_mode:
+                    self.selected_point_type = point_type
+                    self.start_connection(point_id)
+                else:
+                    if not (self.parse_connection_tags(point_id) or point_type==self.selected_point_type):
+                        if point_type=='in':
+                            self.create_new_connection(point_id, self.connection_start)
+                        elif point_type == 'out':
+                            self.create_new_connection(point_id, self.connection_start, swap=True)
+                    self.connection_mode = False
+                    self.connection_start = None
+                    self.root.config(cursor="")
                 return
 
         self.drag_start(event)
 
-    def has_input_index(self, input_point):
-        text_items = self.canvas.find_withtag(f'in_{input_point}')
-        return len(text_items) > 1
-
-    def create_new_connection(self, in_point, out_point):
-        if not any(conn[1] == in_point for conn in self.connections):
+    def create_new_connection(self, point1, point2, swap=False):
+        in_point = point2 if swap else point1
+        out_point = point1 if swap else point2
+        print(out_point, in_point)
+        if not self.parse_connection_tags(in_point):
             self.connections.append((out_point, in_point))
 
             start_item = self.canvas.find_withtag(f'out_{out_point}')[0]
@@ -260,10 +268,33 @@ class FailureSimulator:
                                     fill='black', font=('Arial', 10), tags=f'in_{in_point}_text')
 
     def get_node_by_point(self, point_id):
-        for node in self.nodes:
-            if point_id in node.inputs or point_id in node.outputs:
-                return node
+        # Find point on canvas by its tag
+        point_items = self.canvas.find_withtag(f'out_{point_id}') or self.canvas.find_withtag(f'in_{point_id}')
+        if point_items:
+            # Get all tags of the found point
+            point_tags = self.canvas.gettags(point_items[0])
+            for tag in point_tags:
+                # Find tag that identifies which node this point belongs to
+                if tag.startswith('point_of_'):
+                    node_id = int(tag.split('_')[-1])
+                    return self.nodes[node_id]
         return None
+
+    def parse_connection_tags(self, point_id):
+        """
+        Parses connection tags to check if point is connected
+        Returns True if point is found in any connection tag
+        """
+        all_connections = self.canvas.find_withtag('conn_')
+        for conn in all_connections:
+            tags = self.canvas.gettags(conn)
+            for tag in tags:
+                if tag.startswith('conn_'):
+                    # Parse both points from connection tag (format: 'conn_out_in')
+                    _, start, end = tag.split('_')
+                    if point_id == start or point_id == end:
+                        return True
+        return False
 
     def delete_node(self, event):
         clicked_items = self.canvas.find_closest(event.x, event.y)
@@ -299,9 +330,9 @@ class FailureSimulator:
                 break
 
 
-    def start_connection(self):
+    def start_connection(self, point):
         self.connection_mode = True
-        self.connection_start = None
+        self.connection_start = point
         self.root.config(cursor="cross")
 
     def drag_start(self, event):
@@ -323,8 +354,8 @@ class FailureSimulator:
             start_point, end_point = conn
 
             # Check if this connection involves the moved node
-            if (any(start_point == f"{node.id}{i}" for i in range(6)) or
-                    any(end_point == f"i{node.id}{i}" for i in range(6))):
+            if (any(start_point == f"{node.id}{i}" for i in range(7)) or
+                    any(end_point == f"i{node.id}{i}" for i in range(7))):
                 # Delete old connection line
                 self.canvas.delete(f'conn_{start_point}_{end_point}')
 
@@ -365,7 +396,7 @@ class FailureSimulator:
                 self.canvas.move(item, dx, dy)
         elif node.type == 'aggregate':
             for i in range(6):
-                in_id = f"{node.typeid}{i + 1}"  # Correct format for aggregate input points
+                in_id = f"{node.typeid}{i + 7}"  # Correct format for aggregate input points
                 for item in self.canvas.find_withtag(f'in_{in_id}'):
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'in_{in_id}_text'):
