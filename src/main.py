@@ -108,8 +108,19 @@ class FailureSimulator:
         return canvas.create_polygon(points, smooth=True, **kwargs)
 
     def draw_node(self, node):
-        x = len(self.nodes) * 100 + 50
-        y = 300
+        last_y = 300  # Default y position
+        for existing_node in self.nodes[:-1]:  # Exclude current node
+            if existing_node.type == node.type and existing_node.typeid < node.typeid:
+                last_y = existing_node.y + 150
+                last_x = existing_node.x
+        if self.nodes[-1].type == 'input' and Node.input_nodes == 1:
+            last_x = 100
+        if self.nodes[-1].type == 'aggregate' and Node.aggregate_nodes == 1:
+            last_x = 350
+        if self.nodes[-1].type == 'output' and Node.output_nodes == 1:
+            last_x = 600
+        x = last_x
+        y = last_y
         node.x = x
         node.y = y
 
@@ -173,20 +184,25 @@ class FailureSimulator:
                 self.canvas.create_text(x + 50, y + y_offset, text=out_id,
                                         fill='black', font=('Arial', 10), tags=f'out_{out_id}_text')
 
-    def draw_connection(self, start_coords, end_coords, tags):
+    def draw_connection(self, start_coords, end_coords, smooth, tags):
         # Calculate control points for the curve
         ctrl_x1 = start_coords[0] + (end_coords[0] - start_coords[0]) * 0.4
         ctrl_x2 = start_coords[0] + (end_coords[0] - start_coords[0]) * 0.6
 
-        # Create curved line using cubic Bezier curve
-        curve_points = [
-            start_coords[0], start_coords[1],
-            ctrl_x1, start_coords[1],
-            ctrl_x2, end_coords[1],
-            end_coords[0], end_coords[1]
-        ]
-        return self.canvas.create_line(curve_points, smooth=True, splinesteps=32,
-                                       width=2, tags=tags)
+        if smooth:
+            # Create curved line using cubic Bezier curve
+            curve_points = [
+                start_coords[0], start_coords[1],
+                ctrl_x1, start_coords[1],
+                ctrl_x2, end_coords[1],
+                end_coords[0], end_coords[1]
+            ]
+            return self.canvas.create_line(curve_points, smooth=True, splinesteps=32,
+                                           width=3, fill='orange', tags=tags)
+        else:
+            return self.canvas.create_line(start_coords[0], start_coords[1],
+                                           end_coords[0], end_coords[1],
+                                           width=3, fill='orange', tags=tags)
 
     def canvas_click(self, event):
         clicked_items = self.canvas.find_closest(event.x, event.y)
@@ -272,7 +288,7 @@ class FailureSimulator:
             end_x = (end_coords[0] + end_coords[2]) / 2
             end_y = (end_coords[1] + end_coords[3]) / 2
 
-            self.draw_connection([start_x, start_y], [end_x, end_y],
+            self.draw_connection([start_x, start_y], [end_x, end_y], True,
                                  f'conn_{out_point}_{in_point}')
 
             # Create text for input point with output point's index
@@ -376,10 +392,14 @@ class FailureSimulator:
             start_point, end_point = conn
 
             # Check if this connection involves the moved node
-            if (any(start_point == f"{node.id}{i}" for i in range(15)) or
-                    any(end_point == f"{node.id}{i}" for i in range(7))):
-                # Delete old connection line
-                self.canvas.delete(f'conn_{start_point}_{end_point}')
+            if (any(start_point == f"{node.typeid}{i}" for i in range(15)) or
+                    any(end_point == f"{node.typeid}{i}" for i in range(15))):
+                in_agg = self.get_node_by_point(start_point) != self.get_node_by_point(end_point)
+
+                if in_agg:
+                    self.canvas.delete(f'conn_{start_point}_{end_point}')
+                else:
+                    self.canvas.delete(f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}')
 
                 # Create new connection line at updated position
                 start_item = self.canvas.find_withtag(f'out_{start_point}')[0]
@@ -393,8 +413,10 @@ class FailureSimulator:
                 end_x = (end_coords[0] + end_coords[2]) / 2
                 end_y = (end_coords[1] + end_coords[3]) / 2
 
-                self.draw_connection([start_x, start_y], [end_x, end_y],
-                                     f'conn_{start_point}_{end_point}')
+                self.draw_connection([start_x, start_y], [end_x, end_y], in_agg,
+                                     tags=f'conn_{start_point}_{end_point}' if in_agg else
+                                     f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}'
+                                     )
 
     def drag(self, event):
         if self.connection_mode or self.drag_data["item"] is None:
@@ -423,12 +445,12 @@ class FailureSimulator:
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'in_{in_id}_text'):
                     self.canvas.move(item, dx, dy)
-            all_items = self.canvas.find_all()
-            for item in all_items:
-                tags = self.canvas.gettags(item)
-                for tag in tags:
-                    if tag.startswith(f'internal_conn_in_{node.id}'):
-                        self.canvas.move(item, dx, dy)
+            # all_items = self.canvas.find_all()
+            # for item in all_items:
+            #     tags = self.canvas.gettags(item)
+            #     for tag in tags:
+            #         if tag.startswith(f'internal_conn_in_{node.id}'):
+            #             self.canvas.move(item, dx, dy)
 
         # Move output points based on node type
         if node.type == 'input':
