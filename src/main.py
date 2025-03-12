@@ -73,7 +73,7 @@ class FailureSimulator:
         control_frame.grid_rowconfigure(3, weight=1)  # Extra space at bottom
 
         self.canvas.bind("<Button-1>", self.canvas_click)
-        self.canvas.bind("<Button-3>", self.delete_node)
+        # self.canvas.bind("<Button-3>", self.delete_node)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.drag_stop)
 
@@ -205,47 +205,62 @@ class FailureSimulator:
 
                 # Handle clicks inside aggregate
                 if clicked_node and clicked_node.type == 'aggregate':
-                    if tag.startswith('out_'):
-                        self.connection_mode = True
-                        self.connection_start = point_id
-                        self.root.config(cursor="cross")
-                    elif tag.startswith('in_'):
-                        self.connection_mode = True
-                        self.connection_start = point_id
-                        self.root.config(cursor="cross")
-
+                    print("a")
                     if not self.connection_mode:
+                        self.selected_node = clicked_node
+                        self.selected_point_type = point_type
                         self.start_connection(point_id)
                     else:
-                        # if not self.parse_connection_tags(point_id):
-                        #     self.create_new_connection(point_id, self.connection_start)
-                        self.connection_mode = False
-                        self.connection_start = None
-                        self.root.config(cursor="")
+                        if not (point_type == self.selected_point_type):
+                            if self.selected_node == clicked_node:
+                                self.create_new_connection(point_id, self.connection_start,
+                                                           swap=False if point_type=='in' else True,
+                                                           internal=True)
+                            else:
+                                self.create_new_connection(point_id, self.connection_start,
+                                                           swap=False if point_type == 'in' else True)
+                        self.stop_connection()
                     return
 
                 if not self.connection_mode:
                     self.selected_point_type = point_type
                     self.start_connection(point_id)
                 else:
-                    if not (self.parse_connection_tags(point_id) or point_type==self.selected_point_type):
-                        if point_type=='in':
-                            self.create_new_connection(point_id, self.connection_start)
-                        elif point_type == 'out':
-                            self.create_new_connection(point_id, self.connection_start, swap=True)
-                    self.connection_mode = False
-                    self.connection_start = None
-                    self.root.config(cursor="")
+                    if not (point_type==self.selected_point_type):
+                        self.create_new_connection(point_id, self.connection_start,
+                                                   swap=False if point_type=='in' else True)
+                    self.stop_connection()
                 return
 
         self.drag_start(event)
 
-    def create_new_connection(self, point1, point2, swap=False):
+    def create_new_connection(self, point1, point2, swap=False, internal=False):
         in_point = point2 if swap else point1
         out_point = point1 if swap else point2
         print(out_point, in_point)
+        if internal:
+            self.connections.append((out_point, in_point))
+            print(self.connections)
+            start_item = self.canvas.find_withtag(f'out_{out_point}')[0]
+            end_item = self.canvas.find_withtag(f'in_{in_point}')[0]
+
+            start_coords = self.canvas.coords(start_item)
+            end_coords = self.canvas.coords(end_item)
+
+            start_x = (start_coords[0] + start_coords[2]) / 2
+            start_y = (start_coords[1] + start_coords[3]) / 2
+            end_x = (end_coords[0] + end_coords[2]) / 2
+            end_y = (end_coords[1] + end_coords[3]) / 2
+
+            # Create line using the center points
+            line_coords = [start_x, start_y, end_x, end_y]
+            self.canvas.create_line(line_coords, fill='orange', width=2,
+                                    tags=f'internal_conn_in_{self.get_node_by_point(point1).id}_{out_point}_{in_point}')
+
+            return
         if not self.parse_connection_tags(in_point):
             self.connections.append((out_point, in_point))
+            print(self.connections)
 
             start_item = self.canvas.find_withtag(f'out_{out_point}')[0]
             end_item = self.canvas.find_withtag(f'in_{in_point}')[0]
@@ -285,9 +300,9 @@ class FailureSimulator:
         Parses connection tags to check if point is connected
         Returns True if point is found in any connection tag
         """
-        all_connections = self.canvas.find_withtag('conn_')
-        for conn in all_connections:
-            tags = self.canvas.gettags(conn)
+        all_items = self.canvas.find_all()
+        for item in all_items:
+            tags = self.canvas.gettags(item)
             for tag in tags:
                 if tag.startswith('conn_'):
                     # Parse both points from connection tag (format: 'conn_out_in')
@@ -334,6 +349,14 @@ class FailureSimulator:
         self.connection_mode = True
         self.connection_start = point
         self.root.config(cursor="cross")
+
+
+    def stop_connection(self):
+        self.connection_mode = False
+        self.connection_start = None
+        self.selected_node = None
+        self.root.config(cursor="")
+
 
     def drag_start(self, event):
         clicked_items = self.canvas.find_closest(event.x, event.y)
@@ -401,6 +424,12 @@ class FailureSimulator:
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'in_{in_id}_text'):
                     self.canvas.move(item, dx, dy)
+            all_items = self.canvas.find_all()
+            for item in all_items:
+                tags = self.canvas.gettags(item)
+                for tag in tags:
+                    if tag.startswith(f'internal_conn_in_{node.id}'):
+                        self.canvas.move(item, dx, dy)
 
         # Move output points based on node type
         if node.type == 'input':
