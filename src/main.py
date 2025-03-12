@@ -112,10 +112,6 @@ class FailureSimulator:
         node.x = x
         node.y = y
 
-        # input_count = sum(1 for n in self.nodes if n.type == 'input' and n.id < node.id)
-        # output_count = sum(1 for n in self.nodes if n.type == 'output' and n.id < node.id)
-        # aggregate_count = sum(1 for n in self.nodes if n.type == 'aggregate' and n.id < node.id)
-
         body_color = '#333333'
         header_color = '#555555'
         outline_color = '#999999'
@@ -433,26 +429,8 @@ class FailureSimulator:
             for j in range(size):
                 ttk.Label(matrix_window, text=f"{int(matrix[i][j])}").grid(row=i + 1, column=j + 1, padx=5, pady=5)
 
-    def redraw_connection(self, connection):
-        start, end = connection
-        self.canvas.delete(f'conn_{start}_{end}')
-
-        start_item = self.canvas.find_withtag(f'out_{start}')[0]
-        end_item = self.canvas.find_withtag(f'in_{end}')[0]
-        start_coords = self.canvas.coords(start_item)
-        end_coords = self.canvas.coords(end_item)
-        start_x = (start_coords[0] + start_coords[2]) / 2
-        start_y = (start_coords[1] + start_coords[3]) / 2
-        end_x = (end_coords[0] + end_coords[2]) / 2
-        end_y = (end_coords[1] + end_coords[3]) / 2
-
-        self.draw_connection([start_x, start_y], [end_x, end_y],
-                             f'conn_{start}_{end}')
-
-
     def drag_stop(self, event):
         self.drag_data["item"] = None
-
 
     def add_input_node(self):
         node = Node('input', len(self.nodes))
@@ -471,47 +449,6 @@ class FailureSimulator:
 
     def set_failure(self):
         pass
-
-    def show_adjacency_matrix(self):
-        # Collect all visible point indices from canvas
-        point_ids = set()
-
-        # Get all canvas items
-        all_items = self.canvas.find_all()
-        for item in all_items:
-            tags = self.canvas.gettags(item)
-            for tag in tags:
-                if tag.startswith('out_'):
-                    point_ids.add(tag[4:])  # Remove 'out_' prefix
-                elif tag.startswith('in_'):
-                    point_ids.add(tag[3:])  # Remove 'in_' prefix
-
-        # Convert to sorted list for consistent ordering
-        point_ids = sorted(list(point_ids))
-
-        # Create matrix
-        size = len(point_ids)
-        matrix = np.zeros((size, size))
-
-        # Fill matrix based on actual connections
-        for conn in self.connections:
-            from_idx = point_ids.index(conn[0])
-            to_idx = point_ids.index(conn[1])
-            matrix[from_idx][to_idx] = 1
-
-        # Create matrix window
-        matrix_window = tk.Toplevel(self.root)
-        matrix_window.title("Матрица смежности")
-
-        # Add column headers
-        for j, point_id in enumerate(point_ids):
-            ttk.Label(matrix_window, text=point_id).grid(row=0, column=j + 1, padx=5, pady=5)
-
-        # Add row headers and matrix values
-        for i, point_id in enumerate(point_ids):
-            ttk.Label(matrix_window, text=point_id).grid(row=i + 1, column=0, padx=5, pady=5)
-            for j in range(size):
-                ttk.Label(matrix_window, text=f"{int(matrix[i][j])}").grid(row=i + 1, column=j + 1, padx=5, pady=5)
 
     def get_point_index(self, point_id):
         index = 0
