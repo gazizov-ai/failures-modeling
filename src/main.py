@@ -48,6 +48,8 @@ class FailureSimulator:
         self.selected_point_type = None
         self.drag_data = {"x": 0, "y": 0, "item": None}
 
+        self.failure_mode = False
+
         self.setup_gui()
 
     def setup_gui(self):
@@ -70,7 +72,7 @@ class FailureSimulator:
 
         fail_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Моделирование отказов', menu=fail_menu)
-        fail_menu.add_command(label='Добавить отказ на узле', command=self.set_failure)
+        fail_menu.add_command(label='Добавить отказ на узле', command=self.set_failure, accelerator="Ctrl+F")
 
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
@@ -84,11 +86,13 @@ class FailureSimulator:
 
         self.canvas.bind("<Button-1>", self.canvas_click)
         # self.canvas.bind("<Button-3>", self.delete_node)
+        self.canvas.bind("<Button-3>", self.exit_modes)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.drag_stop)
         self.root.bind("<Control-q>", lambda e: self.add_input_node())
         self.root.bind("<Control-w>", lambda e: self.add_output_node())
         self.root.bind("<Control-e>", lambda e: self.add_aggregate())
+        self.root.bind("<Control-f>", lambda e: self.set_failure())
 
 
     def create_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius, **kwargs):
@@ -213,6 +217,7 @@ class FailureSimulator:
             return
 
         tags = self.canvas.gettags(clicked_items[0])
+        print(tags)
         if not tags:
             return
 
@@ -224,7 +229,6 @@ class FailureSimulator:
 
                 # Handle clicks inside aggregate
                 if clicked_node and clicked_node.type == 'aggregate':
-                    print("a")
                     if not self.connection_mode:
                         self.selected_node = clicked_node
                         self.selected_point_type = point_type
@@ -256,10 +260,8 @@ class FailureSimulator:
     def create_new_connection(self, point1, point2, swap=False, internal=False):
         in_point = point2 if swap else point1
         out_point = point1 if swap else point2
-        print(out_point, in_point)
         if internal:
             self.connections.append((out_point, in_point))
-            print(self.connections)
             start_item = self.canvas.find_withtag(f'out_{out_point}')[0]
             end_item = self.canvas.find_withtag(f'in_{in_point}')[0]
 
@@ -377,6 +379,16 @@ class FailureSimulator:
         self.root.config(cursor="")
 
 
+    def exit_modes(self, event):
+        if self.failure_mode:
+            self.failure_mode = False
+            self.canvas.bind('<Button-1>', self.canvas_click)
+            self.root.config(cursor="")
+
+        if self.connection_mode:
+            self.stop_connection()
+
+
     def drag_start(self, event):
         clicked_items = self.canvas.find_closest(event.x, event.y)
         if not clicked_items:
@@ -394,9 +406,15 @@ class FailureSimulator:
         for conn in self.connections:
             start_point, end_point = conn
 
+            if node.type == 'input':
+                input_point = f'0{node.typeid}'
+                should_update = (start_point == input_point or end_point == input_point)
+            else:
+                should_update = (any(start_point == f"{node.typeid}{i}" for i in range(15)) or
+                    any(end_point == f"{node.typeid}{i}" for i in range(15)))
+
             # Check if this connection involves the moved node
-            if (any(start_point == f"{node.typeid}{i}" for i in range(15)) or
-                    any(end_point == f"{node.typeid}{i}" for i in range(15))):
+            if should_update:
                 in_agg = self.get_node_by_point(start_point) != self.get_node_by_point(end_point)
 
                 if in_agg:
@@ -448,12 +466,6 @@ class FailureSimulator:
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'in_{in_id}_text'):
                     self.canvas.move(item, dx, dy)
-            # all_items = self.canvas.find_all()
-            # for item in all_items:
-            #     tags = self.canvas.gettags(item)
-            #     for tag in tags:
-            #         if tag.startswith(f'internal_conn_in_{node.id}'):
-            #             self.canvas.move(item, dx, dy)
 
         # Move output points based on node type
         if node.type == 'input':
@@ -531,9 +543,6 @@ class FailureSimulator:
         self.nodes.append(node)
         self.draw_node(node)
 
-    def set_failure(self):
-        pass
-
     def get_point_index(self, point_id):
         index = 0
         for node in self.nodes:
@@ -546,6 +555,133 @@ class FailureSimulator:
                     return index
                 index += 1
         return -1
+
+    def mark_failed_elements(self, point_id, is_initial=False):
+        if point_id in self.visited_points:
+            return
+        self.visited_points.add(point_id)
+
+        point_items = self.canvas.find_withtag(f'out_{point_id}') or self.canvas.find_withtag(f'in_{point_id}')
+        current_point_type = 'in' if self.canvas.find_withtag(f'in_{point_id}') else 'out'
+        node = self.get_node_by_point(point_id)
+
+        if current_point_type == 'in':
+            # Mark all internal connections and output points connected to this input
+            for conn in self.connections:
+                start, end = conn
+                if end == point_id:
+                    # Check if this is an internal connection
+                    internal_items = self.canvas.find_withtag(f'internal_conn_in_{node.id}_{start}_{end}')
+                    if internal_items:
+                        # Mark the internal connection
+                        for item in internal_items:
+                            self.canvas.addtag_withtag('failed', item)
+                        # Mark the connected output point
+                        out_items = self.canvas.find_withtag(f'out_{start}')
+                        for item in out_items:
+                            self.canvas.addtag_withtag('failed', item)
+                        # Continue propagation from the output point
+                        self.mark_failed_elements(start)
+                    else:
+                        # Handle regular connections
+                        conn_items = self.canvas.find_withtag(f'conn_{start}_{end}')
+                        if conn_items:
+                            for item in conn_items:
+                                self.canvas.addtag_withtag('failed', item)
+                            out_items = self.canvas.find_withtag(f'out_{start}')
+                            for item in out_items:
+                                self.canvas.addtag_withtag('failed', item)
+                            self.mark_failed_elements(start)
+
+        else:  # output point
+            # For aggregate output points, only look forward through conn connections
+            if node.type == 'aggregate':
+                # Check only regular outgoing connections
+                for conn in self.connections:
+                    if conn[0] == point_id:  # If this point is source
+                        # Only handle conn_ connections, skip internal
+                        conn_items = self.canvas.find_withtag(f'conn_{conn[0]}_{conn[1]}')
+                        if conn_items:  # If regular connection exists
+                            for item in conn_items:
+                                self.canvas.addtag_withtag('failed', item)
+                            connected_point = conn[1]
+                            point_items = self.canvas.find_withtag(f'in_{connected_point}')
+                            for item in point_items:
+                                self.canvas.addtag_withtag('failed', item)
+                            self.mark_failed_elements(connected_point)
+            else:
+                # For non-aggregate output points, mark the node and continue
+                node_items = self.canvas.find_withtag(f'node_{node.id}')
+                for item in node_items:
+                    self.canvas.addtag_withtag('failed', item)
+
+                # Check regular connections
+                for conn in self.connections:
+                    if conn[0] == point_id:  # If this point is source
+                        conn_items = self.canvas.find_withtag(f'conn_{conn[0]}_{conn[1]}')
+                        for item in conn_items:
+                            self.canvas.addtag_withtag('failed', item)
+                        connected_point = conn[1]
+                        point_items = self.canvas.find_withtag(f'in_{connected_point}')
+                        for item in point_items:
+                            self.canvas.addtag_withtag('failed', item)
+                        self.mark_failed_elements(connected_point)
+
+    def color_failed_elements(self):
+        all_items = self.canvas.find_all()
+        for item in all_items:
+            if 'failed' in self.canvas.gettags(item):
+                item_type = self.canvas.type(item)
+                if item_type == 'oval':
+                    coords = self.canvas.coords(item)
+                    center_x = (coords[0] + coords[2]) / 2
+                    center_y = (coords[1] + coords[3]) / 2
+                    width = coords[2] - coords[0]
+                    height = coords[3] - coords[1]
+                    new_width = width * 1.5
+                    new_height = height * 1.5
+                    new_coords = [
+                        center_x - new_width / 2,
+                        center_y - new_height / 2,
+                        center_x + new_width / 2,
+                        center_y + new_height / 2
+                    ]
+                    self.canvas.coords(item, *new_coords)
+                    self.canvas.itemconfig(item, fill='red')
+                elif item_type == 'polygon':
+                    self.canvas.itemconfig(item, outline='red', width=2)
+                elif item_type == 'line':
+                    self.canvas.itemconfig(item, fill='red', width=2)
+
+    def set_failure(self):
+        self.previous_click_handler = self.canvas.bind('<Button-1>')
+        self.canvas.unbind('<Button-1>')
+        self.failure_mode = True
+        self.root.config(cursor="crosshair")
+        self.visited_points = set()
+
+        def handle_failure_click(event):
+            if not self.failure_mode:
+                return
+
+            clicked_items = self.canvas.find_closest(event.x, event.y)
+            if not clicked_items:
+                return
+
+            tags = self.canvas.gettags(clicked_items[0])
+            for tag in tags:
+                if tag.startswith('out_'):
+                    point_id = tag[4:]
+                    self.visited_points.clear()
+                    self.mark_failed_elements(point_id, True)
+                    self.color_failed_elements()
+
+                    self.failure_mode = False
+                    self.root.config(cursor="")
+                    self.canvas.bind('<Button-1>', self.canvas_click)
+                    return
+
+        self.canvas.bind('<Button-1>', handle_failure_click)
 
     def run(self):
         self.root.mainloop()
