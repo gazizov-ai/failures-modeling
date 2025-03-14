@@ -641,8 +641,17 @@ class FailureSimulator:
             return
         self.visited_points.add(point_id)
 
+        # Get the node that owns this point
+        node = self.get_node_by_point(point_id)
+        if node:
+            # Mark the node as failed
+            node_items = self.canvas.find_withtag(f'node_{node.id}')
+            for item in node_items:
+                self.canvas.addtag_withtag('failed', item)
+
         point_items = self.canvas.find_withtag(f'out_{point_id}') or self.canvas.find_withtag(f'in_{point_id}')
         current_point_type = 'in' if self.canvas.find_withtag(f'in_{point_id}') else 'out'
+
         node = self.get_node_by_point(point_id)
 
         if current_point_type == 'in':
