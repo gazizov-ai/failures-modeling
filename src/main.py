@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, PhotoImage
 import networkx as nx
 import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
 from networkx import nodes
 
 
@@ -82,9 +84,9 @@ class FailureSimulator:
 
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
-        graph_menu.add_command(label='Матрица смежности', command=self.add_input_node)
-        graph_menu.add_command(label='Меры важности узлов', command=self.add_aggregate)
-        graph_menu.add_command(label='Дерево отказов FTA', command=self.add_output_node)
+        graph_menu.add_command(label='Матрица смежности', command=self.show_adjacency_matrix)
+        graph_menu.add_command(label='Меры важности узлов')
+        graph_menu.add_command(label='Дерево отказов FTA', command=self.build_fault_tree)
         graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.add_output_node)
 
         self.canvas = tk.Canvas(self.root, bg='#DDDDDD', bd=1, relief='solid')
@@ -334,6 +336,18 @@ class FailureSimulator:
                         return node
         return None
 
+
+    def get_point_text(self, point_id, point_type):
+        """
+        Get text of any point (input or output)
+        point_id: ID of the point
+        point_type: 'in' or 'out'
+        """
+        text_items = self.canvas.find_withtag(f'{point_type}_{point_id}_text')
+        if text_items:
+            return self.canvas.itemcget(text_items[0], 'text')
+        return None
+
     def parse_connection_tags(self, point_id):
         """
         Parses connection tags to check if point is connected
@@ -491,16 +505,30 @@ class FailureSimulator:
                 should_update = (start_point == input_point or end_point == input_point)
             else:
                 should_update = (any(start_point == f"{node.typeid}{i}" for i in range(15)) or
-                    any(end_point == f"{node.typeid}{i}" for i in range(15)))
+                                 any(end_point == f"{node.typeid}{i}" for i in range(15)))
 
             # Check if this connection involves the moved node
             if should_update:
                 in_agg = self.get_node_by_point(start_point) != self.get_node_by_point(end_point)
 
+                # Store if connection was failed before deletion
+                old_conn_tag = f'conn_{start_point}_{end_point}'
+                old_internal_tag = f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}'
+
+                was_failed = False
                 if in_agg:
-                    self.canvas.delete(f'conn_{start_point}_{end_point}')
+                    old_items = self.canvas.find_withtag(old_conn_tag)
                 else:
-                    self.canvas.delete(f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}')
+                    old_items = self.canvas.find_withtag(old_internal_tag)
+
+                if old_items:
+                    was_failed = 'failed' in self.canvas.gettags(old_items[0])
+
+                # Delete old connection
+                if in_agg:
+                    self.canvas.delete(old_conn_tag)
+                else:
+                    self.canvas.delete(old_internal_tag)
 
                 # Create new connection line at updated position
                 start_item = self.canvas.find_withtag(f'out_{start_point}')[0]
@@ -514,10 +542,18 @@ class FailureSimulator:
                 end_x = (end_coords[0] + end_coords[2]) / 2
                 end_y = (end_coords[1] + end_coords[3]) / 2
 
-                self.draw_connection([start_x, start_y], [end_x, end_y], in_agg,
-                                     tags=f'conn_{start_point}_{end_point}' if in_agg else
-                                     f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}'
-                                     )
+                new_conn = self.draw_connection(
+                    [start_x, start_y],
+                    [end_x, end_y],
+                    in_agg,
+                    tags=f'conn_{start_point}_{end_point}' if in_agg else
+                    f'internal_conn_in_{self.get_node_by_point(start_point).id}_{start_point}_{end_point}'
+                )
+
+                # Restore failed state if it was failed before
+                if was_failed:
+                    self.canvas.addtag_withtag('failed', new_conn)
+                    self.canvas.itemconfig(new_conn, fill='red', width=2)
 
     def drag(self, event):
         if self.connection_mode or self.drag_data["item"] is None:
@@ -571,39 +607,127 @@ class FailureSimulator:
         node.x += dx
         node.y += dy
 
+    def get_internal_connections(self):
+        internal_connections = []
+        for item in self.canvas.find_all():
+            tags = self.canvas.gettags(item)
+            for tag in tags:
+                if tag.startswith('internal_conn_in_'):
+                    _, _, _, node_id, start_point, end_point = tag.split('_')
+                    start_text = self.get_point_text(start_point, 'out')
+                    end_text = self.get_point_text(end_point, 'in')
+                    internal_connections.append((start_text, end_text))
+        return internal_connections
+
     def show_adjacency_matrix(self):
-        # Collect only unique point IDs from nodes
-        point_ids = set()
+        import pandas as pd
+        from tkinter import ttk
+        import tkinter as tk
 
-        for node in self.nodes:
-            if node.type == 'input':
-                point_ids.add(f"{node.id}0")
-            elif node.type == 'output':
-                point_ids.add(f"i{node.id}0")
-            elif node.type == 'aggregate':
-                for i in range(6):
-                    point_ids.add(f"{node.id}{i}")
-                    point_ids.add(f"i{node.id}{i}")
+        # Find all internal connections
+        internal_connections = self.get_internal_connections()
 
-        point_ids = sorted(list(point_ids))
-        size = len(point_ids)
+        # Get unique point labels
+        all_points = set()
+        for start, end in internal_connections:
+            all_points.add(start)
+            all_points.add(end)
+
+        point_labels = sorted(list(all_points))
+        size = len(point_labels)
+
+        # Create matrix using numpy
         matrix = np.zeros((size, size))
 
-        for conn in self.connections:
-            from_idx = point_ids.index(conn[0])
-            to_idx = point_ids.index(conn[1])
+        # Fill matrix
+        for start, end in internal_connections:
+            from_idx = point_labels.index(start)
+            to_idx = point_labels.index(end)
             matrix[from_idx][to_idx] = 1
 
+        # Transpose matrix
+        matrix = matrix.T
+
+        # Create DataFrame
+        df = pd.DataFrame(matrix,
+                          index=point_labels,
+                          columns=point_labels)
+
+        # Create window
         matrix_window = tk.Toplevel(self.root)
         matrix_window.title("Матрица смежности")
 
-        for j, point_id in enumerate(point_ids):
-            ttk.Label(matrix_window, text=point_id).grid(row=0, column=j + 1, padx=5, pady=5)
+        # Create frame for the matrix
+        frame = ttk.Frame(matrix_window)
+        frame.pack(expand=True, fill='both', padx=5, pady=5)
 
-        for i, point_id in enumerate(point_ids):
-            ttk.Label(matrix_window, text=point_id).grid(row=i + 1, column=0, padx=5, pady=5)
-            for j in range(size):
-                ttk.Label(matrix_window, text=f"{int(matrix[i][j])}").grid(row=i + 1, column=j + 1, padx=5, pady=5)
+        # Create labels for columns
+        for j, label in enumerate(point_labels, start=1):
+            cell = tk.Label(frame, text=label, borderwidth=1, relief="solid",
+                            width=6, height=2, bg='lightgray')
+            cell.grid(row=0, column=j, sticky='nsew')
+
+        # Create labels for rows and colored cells
+        for i, row_label in enumerate(point_labels, start=1):
+            # Row label
+            row_header = tk.Label(frame, text=row_label, borderwidth=1, relief="solid",
+                                  width=6, height=2, bg='lightgray')
+            row_header.grid(row=i, column=0, sticky='nsew')
+
+            # Matrix cells
+            for j, col_label in enumerate(point_labels, start=1):
+                value = df.iloc[i - 1, j - 1]
+                bg_color = '#90EE90' if value == 1 else '#FFB6C1'  # Light green for 1, light red for 0
+                cell = tk.Label(frame, borderwidth=1, relief="solid",
+                                width=6, height=2, bg=bg_color,
+                                highlightbackground='#D3D3D3', highlightthickness=1)
+                cell.grid(row=i, column=j, sticky='nsew')
+
+        # Configure grid weights
+        for i in range(len(point_labels) + 1):
+            frame.grid_columnconfigure(i, weight=1)
+            frame.grid_rowconfigure(i, weight=1)
+
+        canvas = tk.Canvas(matrix_window)
+
+        canvas.pack(side='left', fill='both', expand=True)
+
+    def build_fault_tree(self):
+        connections = self.get_internal_connections()
+
+        # Find start points (not present as end points)
+        all_starts = set(start for start, _ in connections)
+        all_ends = set(end for _, end in connections)
+        start_points = all_starts - all_ends
+
+        def process_node(node_name, visited=None):
+            if visited is None:
+                visited = set()
+
+            if node_name in visited:
+                return [f"Connection to existing node: {node_name}"]
+
+            visited.add(node_name)
+            tree_connections = []
+
+            # Find all connections where this node is the start point
+            connected_nodes = [(start, end) for start, end in connections if start == node_name]
+
+            for start, end in connected_nodes:
+                tree_connections.append(f"{start} -> {end}")
+                tree_connections.extend(process_node(end, visited))
+
+            return tree_connections
+
+        # Process each start point
+        all_connections = []
+        for start_point in start_points:
+            all_connections.append(f"\nStarting from source point: {start_point}")
+            all_connections.extend(process_node(start_point))
+
+        # Print results
+        print("\n".join(all_connections))
+
 
     def drag_stop(self, event):
         self.drag_data["item"] = None
