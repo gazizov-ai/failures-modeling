@@ -692,41 +692,7 @@ class FailureSimulator:
 
         canvas.pack(side='left', fill='both', expand=True)
 
-    def build_fault_tree(self):
-        connections = self.get_internal_connections()
 
-        # Find start points (not present as end points)
-        all_starts = set(start for start, _ in connections)
-        all_ends = set(end for _, end in connections)
-        start_points = all_starts - all_ends
-
-        def process_node(node_name, visited=None):
-            if visited is None:
-                visited = set()
-
-            if node_name in visited:
-                return [f"Connection to existing node: {node_name}"]
-
-            visited.add(node_name)
-            tree_connections = []
-
-            # Find all connections where this node is the start point
-            connected_nodes = [(start, end) for start, end in connections if start == node_name]
-
-            for start, end in connected_nodes:
-                tree_connections.append(f"{start} -> {end}")
-                tree_connections.extend(process_node(end, visited))
-
-            return tree_connections
-
-        # Process each start point
-        all_connections = []
-        for start_point in start_points:
-            all_connections.append(f"\nStarting from source point: {start_point}")
-            all_connections.extend(process_node(start_point))
-
-        # Print results
-        print("\n".join(all_connections))
 
 
     def drag_stop(self, event):
