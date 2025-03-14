@@ -16,6 +16,7 @@ class Node:
         self.outputs = []
         self.x = 0
         self.y = 0
+        self.deleted = False
 
         if node_type == 'input':
             Node.input_nodes += 1
@@ -72,7 +73,7 @@ class FailureSimulator:
         add_menu.add_command(label='Входной узел', command=self.add_input_node, accelerator="Ctrl+Q")
         add_menu.add_command(label='Агрегат', command=self.add_aggregate, accelerator="Ctrl+W")
         add_menu.add_command(label='Выходной узел', command=self.add_output_node, accelerator="Ctrl+E")
-        nodes_menu.add_command(label='Удалить')
+        nodes_menu.add_command(label='Удалить', command=self.set_delete_mode, accelerator="Ctrl+D")
 
         fail_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Моделирование отказов', menu=fail_menu)
@@ -102,6 +103,7 @@ class FailureSimulator:
         self.root.bind("<Control-f>", lambda e: self.set_failure())
         self.root.bind("<Control-r>", lambda e: self.reset_failures())
         self.root.bind("<Control-n>", lambda e: self.reset_canvas())
+        self.root.bind("<Control-d>", lambda e: self.set_delete_mode())
 
         self.root.bind("<Control-Q>", lambda e: self.add_input_node())
         self.root.bind("<Control-W>", lambda e: self.add_aggregate())
@@ -109,6 +111,7 @@ class FailureSimulator:
         self.root.bind("<Control-F>", lambda e: self.set_failure())
         self.root.bind("<Control-R>", lambda e: self.reset_failures())
         self.root.bind("<Control-N>", lambda e: self.reset_canvas())
+        self.root.bind("<Control-D>", lambda e: self.set_delete_mode())
 
 
     def create_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius, **kwargs):
@@ -320,16 +323,15 @@ class FailureSimulator:
                                     fill='black', font=('Arial', 10), tags=f'in_{in_point}_text')
 
     def get_node_by_point(self, point_id):
-        # Find point on canvas by its tag
         point_items = self.canvas.find_withtag(f'out_{point_id}') or self.canvas.find_withtag(f'in_{point_id}')
         if point_items:
-            # Get all tags of the found point
             point_tags = self.canvas.gettags(point_items[0])
             for tag in point_tags:
-                # Find tag that identifies which node this point belongs to
                 if tag.startswith('point_of_'):
                     node_id = int(tag.split('_')[-1])
-                    return self.nodes[node_id]
+                    node = self.nodes[node_id]
+                    if not node.deleted:  # Skip deleted nodes
+                        return node
         return None
 
     def parse_connection_tags(self, point_id):
@@ -348,38 +350,95 @@ class FailureSimulator:
                         return True
         return False
 
-    def delete_node(self, event):
+    def set_delete_mode(self):
+        self.delete_mode = True
+        self.root.config(cursor="X_cursor")
+        self.canvas.bind('<Button-1>', self.handle_delete_click)
+
+    def handle_delete_click(self, event):
+        if not self.delete_mode:
+            return
+
+        # Reset all failures first
+        self.reset_failures()
+
         clicked_items = self.canvas.find_closest(event.x, event.y)
         if not clicked_items:
             return
 
         tags = self.canvas.gettags(clicked_items[0])
+
+        # Handle node deletion
         for tag in tags:
             if tag.startswith('node_'):
                 node_id = int(tag.split('_')[1])
                 node = self.nodes[node_id]
+                node.deleted = True
 
+                # Remove all connections related to this node
                 connections_to_remove = []
                 for conn in self.connections:
                     start, end = conn
                     if (any(start == out for out in node.outputs) or
                             any(end == inp for inp in node.inputs)):
                         self.canvas.delete(f'conn_{start}_{end}')
-                        # Delete input point text when connection is removed
+                        self.canvas.delete(f'internal_conn_in_{node_id}_{start}_{end}')
                         self.canvas.delete(f'text_in_{end}')
                         connections_to_remove.append(conn)
 
+                # Remove connections from list
                 for conn in connections_to_remove:
                     self.connections.remove(conn)
 
+                # Delete node visuals
                 self.canvas.delete(f'node_{node.id}')
-                for inp in node.inputs:
-                    self.canvas.delete(f'in_{inp}')
-                for out in node.outputs:
-                    self.canvas.delete(f'out_{out}')
 
-                self.nodes.remove(node)
-                break
+                if node.type == 'input':
+                    out_id = f"0{node.typeid}"
+                    self.canvas.delete(f'out_{out_id}')
+                    self.canvas.delete(f'out_{out_id}_text')
+                    Node.input_nodes -= 1
+
+                elif node.type == 'output':
+                    in_id = f"{node.typeid}0"
+                    self.canvas.delete(f'in_{in_id}')
+                    self.canvas.delete(f'in_{in_id}_text')
+                    Node.output_nodes -= 1
+
+                elif node.type == 'aggregate':
+                    for i in range(6):
+                        out_id = f"{node.typeid}{i + 1}"
+                        self.canvas.delete(f'out_{out_id}')
+                        self.canvas.delete(f'out_{out_id}_text')
+
+                    for i in range(6):
+                        in_id = f"{node.typeid}{i + 7}"
+                        self.canvas.delete(f'in_{in_id}')
+                        self.canvas.delete(f'in_{in_id}_text')
+                        for conn in self.connections[:]:
+                            if conn[1] == in_id:
+                                self.canvas.delete(f'conn_{conn[0]}_{in_id}')
+                                self.connections.remove(conn)
+                    Node.aggregate_nodes -= 1
+                return
+
+        # Handle connection deletion
+        for tag in tags:
+            if tag.startswith('conn_'):
+                _, start, end = tag.split('_')
+                self.canvas.delete(f'conn_{start}_{end}')
+                self.canvas.delete(f'text_in_{end}')
+                self.connections.remove((start, end))
+                return
+            if tag.startswith('internal_conn_in_'):
+                # Parse connection info from tag
+                _, _, _, node_id, start, end = tag.split('_')
+                # Delete the connection line
+                self.canvas.delete(tag)
+                # Remove from connections list
+                if (start, end) in self.connections:
+                    self.connections.remove((start, end))
+                return
 
 
     def start_connection(self, point):
@@ -403,6 +462,11 @@ class FailureSimulator:
 
         if self.connection_mode:
             self.stop_connection()
+
+        if self.delete_mode:
+            self.delete_mode = False
+            self.canvas.bind('<Button-1>', self.canvas_click)
+            self.root.config(cursor="")
 
 
     def drag_start(self, event):
@@ -741,8 +805,6 @@ class FailureSimulator:
                 # Reset connection appearance
                 self.canvas.itemconfig(item, fill='orange', width=3)
 
-        # Clear visited points set
-        self.visited_points.clear()
 
     def reset_canvas(self):
         # Delete all elements from canvas
@@ -755,6 +817,8 @@ class FailureSimulator:
 
         # Reset all instance variables
         self.nodes = []
+        for node in self.nodes:
+            node.deleted = False
         self.connections = []
         self.failed_points = set()
         self.connection_mode = False
