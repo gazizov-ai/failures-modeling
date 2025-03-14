@@ -60,6 +60,10 @@ class FailureSimulator:
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
 
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Файл', menu=file_menu)
+        file_menu.add_command(label='Новый', command=self.reset_canvas, accelerator="Ctrl+N")
+
         nodes_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Узлы', menu=nodes_menu)
 
@@ -73,6 +77,7 @@ class FailureSimulator:
         fail_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Моделирование отказов', menu=fail_menu)
         fail_menu.add_command(label='Добавить отказ на узле', command=self.set_failure, accelerator="Ctrl+F")
+        fail_menu.add_command(label='Сбросить отказы', command=self.reset_failures, accelerator="Ctrl+R")
 
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
@@ -89,10 +94,21 @@ class FailureSimulator:
         self.canvas.bind("<Button-3>", self.exit_modes)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.drag_stop)
+
+        # Existing English bindings
         self.root.bind("<Control-q>", lambda e: self.add_input_node())
-        self.root.bind("<Control-w>", lambda e: self.add_output_node())
-        self.root.bind("<Control-e>", lambda e: self.add_aggregate())
+        self.root.bind("<Control-w>", lambda e: self.add_aggregate())
+        self.root.bind("<Control-e>", lambda e: self.add_output_node())
         self.root.bind("<Control-f>", lambda e: self.set_failure())
+        self.root.bind("<Control-r>", lambda e: self.reset_failures())
+        self.root.bind("<Control-n>", lambda e: self.reset_canvas())
+
+        self.root.bind("<Control-Q>", lambda e: self.add_input_node())
+        self.root.bind("<Control-W>", lambda e: self.add_aggregate())
+        self.root.bind("<Control-E>", lambda e: self.add_output_node())
+        self.root.bind("<Control-F>", lambda e: self.set_failure())
+        self.root.bind("<Control-R>", lambda e: self.reset_failures())
+        self.root.bind("<Control-N>", lambda e: self.reset_canvas())
 
 
     def create_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius, **kwargs):
@@ -682,6 +698,77 @@ class FailureSimulator:
                     return
 
         self.canvas.bind('<Button-1>', handle_failure_click)
+
+    def reset_failures(self):
+        # Reset all items with 'failed' tag
+        failed_items = self.canvas.find_withtag('failed')
+        for item in failed_items:
+            # Remove 'failed' tag
+            tags = list(self.canvas.gettags(item))
+            tags.remove('failed')
+            self.canvas.dtag(item, 'failed')
+            self.canvas.itemconfig(item, tags=tags)
+
+            # Reset appearance based on item type
+            item_type = self.canvas.type(item)
+
+            if item_type == 'oval':
+                # Reset point size and color
+                tags = self.canvas.gettags(item)
+                for tag in tags:
+                    if tag.startswith('out_'):
+                        self.canvas.itemconfig(item, fill='red')
+                    elif tag.startswith('in_'):
+                        self.canvas.itemconfig(item, fill='green')
+
+                # Reset point size
+                coords = self.canvas.coords(item)
+                center_x = (coords[0] + coords[2]) / 2
+                center_y = (coords[1] + coords[3]) / 2
+                new_coords = [
+                    center_x - 5,  # Original size was 10x10
+                    center_y - 5,
+                    center_x + 5,
+                    center_y + 5
+                ]
+                self.canvas.coords(item, *new_coords)
+
+            elif item_type == 'polygon':
+                # Reset node appearance
+                self.canvas.itemconfig(item, outline='#999999', width=2)
+
+            elif item_type == 'line':
+                # Reset connection appearance
+                self.canvas.itemconfig(item, fill='orange', width=3)
+
+        # Clear visited points set
+        self.visited_points.clear()
+
+    def reset_canvas(self):
+        # Delete all elements from canvas
+        self.canvas.delete("all")
+
+        # Reset node counters
+        Node.input_nodes = 0
+        Node.output_nodes = 0
+        Node.aggregate_nodes = 0
+
+        # Reset all instance variables
+        self.nodes = []
+        self.connections = []
+        self.failed_points = set()
+        self.connection_mode = False
+        self.connection_start = None
+        self.selected_node = None
+        self.selected_point_type = None
+        self.drag_data = {"x": 0, "y": 0, "item": None}
+        self.failure_mode = False
+        self.visited_points = set()
+
+        # Reset cursor and bindings
+        self.root.config(cursor="")
+        self.canvas.bind("<Button-1>", self.canvas_click)
+
 
     def run(self):
         self.root.mainloop()
