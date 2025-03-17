@@ -87,7 +87,7 @@ class FailureSimulator:
         graph_menu.add_command(label='Матрица смежности', command=self.show_adjacency_matrix)
         graph_menu.add_command(label='Меры важности узлов')
         graph_menu.add_command(label='Дерево отказов FTA', command=self.build_fault_tree)
-        graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.add_output_node)
+        graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.build_rca_tree)
 
         self.canvas = tk.Canvas(self.root, bg='#DDDDDD', bd=1, relief='solid')
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -695,39 +695,307 @@ class FailureSimulator:
     def build_fault_tree(self):
         connections = self.get_internal_connections()
 
-        # Find start points (not present as end points)
-        all_starts = set(start for start, _ in connections)
-        all_ends = set(end for _, end in connections)
-        start_points = all_starts - all_ends
+        # Create a directed graph
+        G = nx.DiGraph()
 
-        def process_node(node_name, visited=None):
-            if visited is None:
-                visited = set()
+        # Add all connections to the graph
+        for start, end in connections:
+            G.add_edge(start, end)
 
-            if node_name in visited:
-                return [f"Connection to existing node: {node_name}"]
+        # Find root nodes (nodes with no incoming edges)
+        root_nodes = [node for node in G.nodes() if G.in_degree(node) == 0]
 
-            visited.add(node_name)
-            tree_connections = []
+        if not root_nodes:
+            messagebox.showinfo("Информация", "Не найдены корневые узлы для построения дерева отказов")
+            return
 
-            # Find all connections where this node is the start point
-            connected_nodes = [(start, end) for start, end in connections if start == node_name]
+        # Add a "System" super-root node
+        system_node = "System"
+        for root in root_nodes:
+            G.add_edge(system_node, root)
 
-            for start, end in connected_nodes:
-                tree_connections.append(f"{start} -> {end}")
-                tree_connections.extend(process_node(end, visited))
+        # Create a proper hierarchical structure
+        # First, assign initial levels using longest path from the system node
+        initial_levels = {system_node: 0}  # System node is at level 0
 
-            return tree_connections
+        # Use BFS to assign levels
+        queue = [(system_node, 0)]
+        visited = {system_node}
 
-        # Process each start point
-        all_connections = []
-        for start_point in start_points:
-            all_connections.append(f"\nStarting from source point: {start_point}")
-            all_connections.extend(process_node(start_point))
+        while queue:
+            node, level = queue.pop(0)
+            initial_levels[node] = level
 
-        # Print results
-        print("\n".join(all_connections))
+            for successor in G.successors(node):
+                if successor not in visited:
+                    visited.add(successor)
+                    queue.append((successor, level + 1))
 
+        # Now ensure that connected nodes are always at different levels
+        # by pushing nodes down if needed
+        levels = initial_levels.copy()
+        changed = True
+
+        while changed:
+            changed = False
+            for u, v in G.edges():
+                # If nodes are at the same level or child is above parent
+                if levels[u] >= levels[v]:
+                    # Push the child node one level down
+                    levels[v] = levels[u] + 1
+                    changed = True
+
+        # Create a new figure with larger size for better visibility
+        plt.figure(figsize=(16, 12))
+
+        # Group nodes by level
+        nodes_by_level = {}
+        for node, level in levels.items():
+            if level not in nodes_by_level:
+                nodes_by_level[level] = []
+            nodes_by_level[level].append(node)
+
+        # Calculate positions for all nodes
+        pos = {}
+        max_level = max(levels.values()) if levels else 0
+
+        for level in range(max_level + 1):
+            nodes = nodes_by_level.get(level, [])
+            n_nodes = len(nodes)
+
+            if level > 0 and n_nodes > 1:
+                def get_parent_avg_x(node):
+                    parents = [p for p in G.predecessors(node) if p in pos]
+                    if parents:
+                        return sum(pos[p][0] for p in parents) / len(parents)
+                    return 0
+
+                nodes.sort(key=get_parent_avg_x)
+
+            for i, node in enumerate(nodes):
+                x_pos = (i - (n_nodes - 1) / 2) * 3
+                pos[node] = (x_pos, -level * 2)
+
+        # Draw the graph with the calculated positions
+        # Color nodes based on their type
+        node_colors = []
+        node_sizes = []
+
+        for node in G.nodes():
+            if node == system_node:
+                node_colors.append('lightgreen')  # System node in green
+                node_sizes.append(3000)  # Larger size for system node
+            elif node in root_nodes:
+                node_colors.append('lightcoral')  # Root nodes in red
+                node_sizes.append(2000)
+            else:
+                node_colors.append('lightblue')  # Other nodes in blue
+                node_sizes.append(2000)
+
+        # Draw edges with arrows
+        nx.draw_networkx_edges(G, pos=pos,
+                               arrows=True,
+                               arrowstyle='-|>',
+                               arrowsize=10,
+                               width=2,
+                               edge_color='black'
+                               )
+        # Draw nodes
+        nx.draw_networkx_nodes(G, pos=pos,
+                               node_color=node_colors,
+                               node_size=node_sizes)
+
+        # Draw node labels
+        nx.draw_networkx_labels(G, pos=pos,
+                                font_size=10,
+                                font_weight='bold')
+
+        # Turn off axis
+        plt.axis('off')
+
+        # Create a new window to display the graph
+        fault_tree_window = tk.Toplevel(self.root)
+        fault_tree_window.title("Дерево отказов FTA")
+        fault_tree_window.geometry("1200x900")
+
+        # Embed the matplotlib figure in the Tkinter window
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        canvas = FigureCanvasTkAgg(plt.gcf(), master=fault_tree_window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Add a toolbar
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(canvas, fault_tree_window)
+        toolbar.update()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def build_rca_tree(self):
+        connections = self.get_internal_connections()
+
+        # Create a directed graph
+        G = nx.DiGraph()
+
+        # Add all connections to the graph
+        for start, end in connections:
+            G.add_edge(start, end)
+
+        # Find leaf nodes (nodes with no outgoing edges)
+        leaf_nodes = [node for node in G.nodes() if G.out_degree(node) == 0]
+
+        # Create a proper hierarchical structure
+        # First, assign initial levels using longest path from any node to leaf nodes
+        initial_levels = {}
+
+        # Find the maximum distance from any node to any leaf node
+        for node in G.nodes():
+            max_distance = 0
+            for leaf in leaf_nodes:
+                try:
+                    # Try to find path from node to leaf
+                    path = nx.shortest_path(G, node, leaf)
+                    max_distance = max(max_distance, len(path) - 1)
+                except nx.NetworkXNoPath:
+                    pass
+
+            # Assign level based on distance to furthest leaf
+            # Higher level means closer to root causes
+            if max_distance > 0:
+                initial_levels[node] = max_distance
+            else:
+                initial_levels[node] = 0
+
+        # Now ensure that connected nodes are always at different levels
+        # Parent should always be at a higher level than child
+        levels = initial_levels.copy()
+        changed = True
+
+        while changed:
+            changed = False
+            for u, v in G.edges():
+                # If parent is at lower or same level as child
+                if levels[u] <= levels[v]:
+                    # Push the parent node one level up
+                    levels[u] = levels[v] + 1
+                    changed = True
+
+        # Reverse the levels so root causes are at the bottom
+        max_level = max(levels.values()) if levels else 0
+        for node in levels:
+            levels[node] = max_level - levels[node]
+
+        # Add VLK nodes for non-leaf nodes
+        vlk_nodes = {}
+
+        # Find nodes that are not at the lowest level
+        non_lowest_level_nodes = [node for node in G.nodes() if node not in leaf_nodes]
+
+        for node in non_lowest_level_nodes:
+            # Get the node object by point name
+            node_obj = self.get_node_by_point(node)
+            if node_obj:
+                # Create VLK node
+                vlk_name = f"ВЛК_{node_obj.typeid}"
+                vlk_nodes[vlk_name] = node
+
+                # Add VLK node to the graph
+                G.add_node(vlk_name)
+                G.add_edge(node, vlk_name)
+
+        # Recalculate levels after adding VLK nodes
+        # Ensure VLK nodes are one level below their parent
+        for vlk_name, parent in vlk_nodes.items():
+            levels[vlk_name] = levels[parent] + 1
+
+        # Update max_level after adding VLK nodes
+        max_level = max(levels.values()) if levels else 0
+
+        # Group nodes by level
+        nodes_by_level = {}
+        for node, level in levels.items():
+            if level not in nodes_by_level:
+                nodes_by_level[level] = []
+            nodes_by_level[level].append(node)
+
+        # Calculate positions for all nodes
+        pos = {}
+
+        for level in range(max_level + 1):
+            nodes = nodes_by_level.get(level, [])
+
+            # Separate VLK nodes and regular nodes
+            vlk_nodes_at_level = [n for n in nodes if n in vlk_nodes.keys()]
+            regular_nodes = [n for n in nodes if n not in vlk_nodes.keys()]
+
+            # Position regular nodes first
+            n_regular = len(regular_nodes)
+            for i, node in enumerate(regular_nodes):
+                x_pos = (i - (n_regular - 1) / 2) * 3
+                pos[node] = (x_pos, -level * 2)
+
+            # Position VLK nodes near their parents
+            for vlk_name in vlk_nodes_at_level:
+                parent = vlk_nodes[vlk_name]
+                parent_pos = pos.get(parent)
+                if parent_pos:
+                    # Position VLK slightly to the right of its parent
+                    pos[vlk_name] = (parent_pos[0] + 0.8, -level * 2)
+
+        # Create a new figure with larger size for better visibility
+        plt.figure(figsize=(16, 12))
+
+        # Color nodes based on their type
+        node_colors = []
+        node_sizes = []
+
+        for node in G.nodes():
+            if node in vlk_nodes.keys():
+                node_colors.append('lightyellow')  # VLK nodes in yellow
+                node_sizes.append(1500)
+            elif node in leaf_nodes:
+                node_colors.append('lightgreen')  # Leaf nodes in green
+                node_sizes.append(2000)
+            else:
+                node_colors.append('lightblue')  # Other nodes in blue
+                node_sizes.append(2000)
+
+        # Draw edges with arrows
+        nx.draw_networkx_edges(G, pos=pos,
+                               arrows=True,
+                               arrowstyle='-|>',
+                               arrowsize=10,
+                               width=2,
+                               edge_color='black')
+
+        # Draw nodes
+        nx.draw_networkx_nodes(G, pos=pos,
+                               node_color=node_colors,
+                               node_size=node_sizes)
+
+        # Draw node labels
+        nx.draw_networkx_labels(G, pos=pos,
+                                font_size=10,
+                                font_weight='bold')
+
+        # Turn off axis
+        plt.axis('off')
+
+        # Create a new window to display the graph
+        rca_tree_window = tk.Toplevel(self.root)
+        rca_tree_window.title("Дерево анализа коренных причин RCA")
+        rca_tree_window.geometry("1200x900")
+
+        # Embed the matplotlib figure in the Tkinter window
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        canvas = FigureCanvasTkAgg(plt.gcf(), master=rca_tree_window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Add a toolbar
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(canvas, rca_tree_window)
+        toolbar.update()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def drag_stop(self, event):
         self.drag_data["item"] = None
