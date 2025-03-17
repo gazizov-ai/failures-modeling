@@ -1,9 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, PhotoImage
+from tkinter import ttk, messagebox, PhotoImage, filedialog
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+import csv
 
 
 class Node:
@@ -86,7 +87,7 @@ class FailureSimulator:
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
         graph_menu.add_command(label='Матрица смежности', command=self.show_adjacency_matrix)
-        graph_menu.add_command(label='Меры важности узлов')
+        graph_menu.add_command(label='Меры важности узлов', command=self.build_analysis_table)
         graph_menu.add_command(label='Дерево отказов FTA', command=self.build_fault_tree)
         graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.build_rca_tree)
 
@@ -1006,6 +1007,175 @@ class FailureSimulator:
         toolbar = NavigationToolbar2Tk(canvas, tree_window)
         toolbar.update()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def build_analysis_table(self):
+        """
+        Создает таблицу анализа схемы с метриками I1, I2 и степенью центральности для каждой точки.
+        """
+        # Получаем все внутренние соединения
+        internal_connections = self.get_internal_connections()
+
+        # Получаем уникальные метки точек
+        all_points = set()
+        for start, end in internal_connections:
+            all_points.add(start)
+            all_points.add(end)
+
+        point_labels = sorted(list(all_points))
+        size = len(point_labels)
+        print(point_labels)
+
+        # Создаем матрицу смежности
+        adjacency_matrix = np.zeros((size, size), dtype=int)
+
+        # Находим все выходные точки (in-точки на узлах с типом output)
+        output_points = []
+        in_points = []
+
+        # Получаем все in-точки с канваса
+        all_items = self.canvas.find_all()
+        for item in all_items:
+            tags = self.canvas.gettags(item)
+            for tag in tags:
+                if tag.startswith('in_') and not tag.endswith('text'):
+                    _, id = tag.split('_')
+                    in_points.append(id)
+
+        for point_id in in_points:
+            # Получаем узел, которому принадлежит точка
+            node = self.get_node_by_point(point_id)
+
+            # Проверяем, является ли узел выходным
+            if node and node.type == "output":
+                # Получаем текст точки
+                point_text = self.get_point_text(point_id, 'in')
+                output_points.append(point_text)
+
+        # Вычисляем метрики для каждой точки
+        metrics = []
+
+        for i, point in enumerate(point_labels):
+            # Получаем узел, которому принадлежит точка
+            node = self.get_node_by_point(point)
+
+            # I1: количество конечных точек, в которые можно попасть из текущей точки
+            reachable_outputs = 0
+
+            # Используем матрицу смежности для поиска достижимых точек
+            # Возводим матрицу в степени для поиска путей разной длины
+            current_matrix = adjacency_matrix.copy()
+            reachable = np.zeros(size, dtype=int)
+
+            # Учитываем прямые пути и пути через промежуточные точки
+            for power in range(1, size + 1):
+                reachable = reachable | (current_matrix[i] > 0)
+                current_matrix = np.matmul(current_matrix, adjacency_matrix)
+
+            # Подсчитываем количество достижимых выходных точек
+            for j, point_j in enumerate(point_labels):
+                if reachable[j] and point_j in output_points:
+                    reachable_outputs += 1
+
+            # I2: количество уникальных узлов, в которые можно попасть, двигаясь только в сторону увеличения id
+            reachable_nodes = set()
+            current_node_id = node.id if node else -1
+
+            for j, point_j in enumerate(point_labels):
+                if reachable[j]:
+                    target_node = self.get_node_by_point(point_j)
+                    if target_node and target_node.id > current_node_id:
+                        reachable_nodes.add(target_node.id)
+
+            # Степень центральности: количество internal и conn-соединений, входящих в данную точку
+            centrality = 0
+
+            # Добавляем метрики в список
+            metrics.append({
+                'point': point,
+                'I1': reachable_outputs,
+                'I2': len(reachable_nodes),
+                'centrality': centrality
+            })
+
+        # Создаем новое окно для таблицы
+        table_window = tk.Toplevel(self.root)
+        table_window.title("Таблица анализа схемы")
+        table_window.geometry("600x800")
+
+        # Создаем фрейм с прокруткой
+        frame = tk.Frame(table_window)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Добавляем полосы прокрутки
+        vsb = tk.Scrollbar(frame, orient="vertical")
+        hsb = tk.Scrollbar(frame, orient="horizontal")
+
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Создаем таблицу (Treeview)
+        table = ttk.Treeview(frame, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # Настраиваем полосы прокрутки
+        vsb.config(command=table.yview)
+        hsb.config(command=table.xview)
+
+        # Определяем столбцы
+        table['columns'] = ('I1', 'I2', 'centrality')
+
+        # Форматируем столбцы
+        table.column('#0', width=150, minwidth=100)
+        table.column('I1', width=100, minwidth=50, anchor=tk.CENTER)
+        table.column('I2', width=100, minwidth=50, anchor=tk.CENTER)
+        table.column('centrality', width=150, minwidth=100, anchor=tk.CENTER)
+
+        # Добавляем заголовки
+        table.heading('#0', text='Точка', anchor=tk.CENTER)
+        table.heading('I1', text='I1', anchor=tk.CENTER)
+        table.heading('I2', text='I2', anchor=tk.CENTER)
+        table.heading('centrality', text='Степень центральности', anchor=tk.CENTER)
+
+        # Заполняем таблицу данными
+        for metric in metrics:
+            table.insert('', tk.END, text=metric['point'],
+                         values=(metric['I1'], metric['I2'], metric['centrality']))
+
+        # Отображаем таблицу
+        table.pack(fill=tk.BOTH, expand=True)
+
+        # Добавляем кнопку для экспорта в CSV
+        export_button = tk.Button(table_window, text="Экспорт в CSV",
+                                  command=lambda: self.export_metrics_to_csv(metrics))
+        export_button.pack(pady=10)
+
+    def export_metrics_to_csv(self, metrics):
+        """
+        Экспортирует метрики в CSV-файл.
+        """
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Сохранить метрики как CSV"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    # Записываем заголовки
+                    writer.writerow(['Точка', 'I1', 'I2', 'Степень центральности'])
+                    # Записываем данные
+                    for metric in metrics:
+                        writer.writerow([
+                            metric['point'],
+                            metric['I1'],
+                            metric['I2'],
+                            metric['centrality']
+                        ])
+                messagebox.showinfo("Экспорт успешен", f"Данные успешно экспортированы в {file_path}")
+            except Exception as e:
+                messagebox.showerror("Ошибка экспорта", f"Не удалось экспортировать данные: {str(e)}")
+
 
     def drag_stop(self, event):
         self.drag_data["item"] = None
