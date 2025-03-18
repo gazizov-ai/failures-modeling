@@ -1,11 +1,9 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, PhotoImage, filedialog
-import networkx as nx
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+from tkinter import messagebox
 import sys
-import csv
+from analysis import *
+from rca_fta import *
+from failures import *
 
 
 class Node:
@@ -81,7 +79,6 @@ class FailureSimulator:
         Настраивает графический интерфейс пользователя.
         Создает меню, холст и привязывает обработчики событий.
         """
-        # Configure root window to be resizable
         self.root.geometry("1000x800")
         self.root.minsize(800, 600)
 
@@ -112,7 +109,7 @@ class FailureSimulator:
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
         graph_menu.add_command(label='Матрица смежности', command=self.show_adjacency_matrix)
-        graph_menu.add_command(label='Меры важности узлов', command=self.build_analysis_table)
+        graph_menu.add_command(label='Меры важности узлов')
         graph_menu.add_command(label='Дерево отказов FTA', command=self.build_fault_tree)
         graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.build_rca_tree)
 
@@ -125,7 +122,6 @@ class FailureSimulator:
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.drag_stop)
 
-        # Existing English bindings
         self.root.bind("<Control-q>", lambda e: self.add_input_node())
         self.root.bind("<Control-w>", lambda e: self.add_aggregate())
         self.root.bind("<Control-e>", lambda e: self.add_output_node())
@@ -149,7 +145,6 @@ class FailureSimulator:
         Запрашивает подтверждение перед выходом.
         """
         if messagebox.askokcancel("Выход", "Вы действительно хотите выйти?"):
-            # Завершаем работу приложения
             self.root.destroy()
             sys.exit(0)
 
@@ -189,8 +184,8 @@ class FailureSimulator:
         :param node: Узел для отрисовки
         """
         last_x = 100
-        last_y = 300  # Default y position
-        for existing_node in self.nodes[:-1]:  # Exclude current node
+        last_y = 300
+        for existing_node in self.nodes[:-1]:
             if existing_node.type == node.type and existing_node.typeid < node.typeid:
                 last_y = existing_node.y + 150
                 last_x = existing_node.x
@@ -404,7 +399,7 @@ class FailureSimulator:
                 if tag.startswith('point_of_'):
                     node_id = int(tag.split('_')[-1])
                     node = self.nodes[node_id]
-                    if not node.deleted:  # Skip deleted nodes
+                    if not node.deleted:
                         return node
         return None
 
@@ -431,7 +426,6 @@ class FailureSimulator:
             tags = self.canvas.gettags(item)
             for tag in tags:
                 if tag.startswith('conn_'):
-                    # Parse both points from connection tag (format: 'conn_out_in')
                     _, start, end = tag.split('_')
                     if point_id == start or point_id == end:
                         return True
@@ -521,11 +515,8 @@ class FailureSimulator:
                 self.connections.remove((start, end))
                 return
             if tag.startswith('internal_conn_in_'):
-                # Parse connection info from tag
                 _, _, _, node_id, start, end = tag.split('_')
-                # Delete the connection line
                 self.canvas.delete(tag)
-                # Remove from connections list
                 if (start, end) in self.connections:
                     self.connections.remove((start, end))
                 return
@@ -551,7 +542,7 @@ class FailureSimulator:
         self.root.config(cursor="")
 
 
-    def exit_modes(self):
+    def exit_modes(self, event):
         """
         Выходит из всех специальных режимов (удаление, соединение, отказ).
         """
@@ -674,14 +665,14 @@ class FailureSimulator:
                     self.canvas.move(item, dx, dy)
 
         if node.type == 'input':
-            out_id = f"0{node.typeid}"  # Correct format for input node output point
+            out_id = f"0{node.typeid}"
             for item in self.canvas.find_withtag(f'out_{out_id}'):
                 self.canvas.move(item, dx, dy)
             for item in self.canvas.find_withtag(f'out_{out_id}_text'):
                 self.canvas.move(item, dx, dy)
         elif node.type == 'aggregate':
             for i in range(6):
-                out_id = f"{node.typeid}{i + 1}"  # Correct format for aggregate output points
+                out_id = f"{node.typeid}{i + 1}"
                 for item in self.canvas.find_withtag(f'out_{out_id}'):
                     self.canvas.move(item, dx, dy)
                 for item in self.canvas.find_withtag(f'out_{out_id}_text'):
@@ -715,64 +706,9 @@ class FailureSimulator:
         Отображает матрицу смежности для текущей схемы сопряжения.
         Создает новое окно с визуализацией связей между точками.
         """
+        show_adjacency_matrix(self)
 
-        internal_connections = self.get_internal_connections()
-
-        all_points = set()
-        for start, end in internal_connections:
-            all_points.add(start)
-            all_points.add(end)
-
-        point_labels = sorted(list(all_points))
-        size = len(point_labels)
-
-        matrix = np.zeros((size, size))
-
-        for start, end in internal_connections:
-            from_idx = point_labels.index(start)
-            to_idx = point_labels.index(end)
-            matrix[from_idx][to_idx] = 1
-
-        matrix = matrix.T
-
-        df = pd.DataFrame(matrix,
-                          index=point_labels,
-                          columns=point_labels)
-
-        matrix_window = tk.Toplevel(self.root)
-        matrix_window.title("Матрица смежности")
-
-        frame = ttk.Frame(matrix_window)
-        frame.pack(expand=True, fill='both', padx=5, pady=5)
-
-        for j, label in enumerate(point_labels, start=1):
-            cell = tk.Label(frame, text=label, borderwidth=1, relief="solid",
-                            width=6, height=2, bg='lightgray')
-            cell.grid(row=0, column=j, sticky='nsew')
-
-        for i, row_label in enumerate(point_labels, start=1):
-            # Row label
-            row_header = tk.Label(frame, text=row_label, borderwidth=1, relief="solid",
-                                  width=6, height=2, bg='lightgray')
-            row_header.grid(row=i, column=0, sticky='nsew')
-
-            for j, col_label in enumerate(point_labels, start=1):
-                value = df.iloc[i - 1, j - 1]
-                bg_color = '#90EE90' if value == 1 else '#FFB6C1'  # Light green for 1, light red for 0
-                cell = tk.Label(frame, borderwidth=1, relief="solid",
-                                width=6, height=2, bg=bg_color,
-                                highlightbackground='#D3D3D3', highlightthickness=1)
-                cell.grid(row=i, column=j, sticky='nsew')
-
-        for i in range(len(point_labels) + 1):
-            frame.grid_columnconfigure(i, weight=1)
-            frame.grid_rowconfigure(i, weight=1)
-
-        canvas = tk.Canvas(matrix_window)
-
-        canvas.pack(side='left', fill='both', expand=True)
-
-    def _build_tree_base(self, connections, is_fta=True):
+    def build_tree_base(self, connections, is_fta=True):
         """
         Базовая функция для отрисовки деревьев FTA и RCA.
 
@@ -785,363 +721,19 @@ class FailureSimulator:
             node_colors: Информация о цвете для каждого узла;
             node_sizes: Информация о размере для каждого узла;
         """
-        G = nx.DiGraph()
-
-        for start, end in connections:
-            G.add_edge(start, end)
-
-        if is_fta:
-            root_nodes = [node for node in G.nodes() if G.in_degree(node) == 0]
-
-            if not root_nodes:
-                messagebox.showinfo("Информация", "Не найдены корневые узлы для построения дерева отказов")
-                return None, None, None, None
-
-            system_node = "System"
-            for root in root_nodes:
-                G.add_edge(system_node, root)
-
-            start_nodes = [system_node]
-            initial_level = 0
-        else:
-            leaf_nodes = [node for node in G.nodes() if G.out_degree(node) == 0]
-
-            system_node = None
-            root_nodes = []
-
-            vlk_nodes = {}
-            non_leaf_nodes = [node for node in G.nodes() if node not in leaf_nodes]
-
-            for node in non_leaf_nodes:
-                node_obj = self.get_node_by_point(node)
-                if node_obj:
-                    vlk_name = f"ВЛК_{node_obj.typeid}"
-                    vlk_nodes[vlk_name] = node
-
-                    G.add_node(vlk_name)
-                    G.add_edge(node, vlk_name)
-
-            start_nodes = list(G.nodes())
-            initial_level = 0
-
-        levels = {}
-
-        if is_fta:
-            queue = [(system_node, initial_level)]
-            visited = {system_node}
-
-            while queue:
-                node, level = queue.pop(0)
-                levels[node] = level
-
-                for successor in G.successors(node):
-                    if successor not in visited:
-                        visited.add(successor)
-                        queue.append((successor, level + 1))
-        else:
-            for node in G.nodes():
-                if node in vlk_nodes.keys():
-                    parent = vlk_nodes[node]
-                    if parent in levels:
-                        levels[node] = levels[parent] + 1
-                    else:
-                        levels[node] = 0
-                else:
-                    max_distance = 0
-                    for leaf in leaf_nodes:
-                        try:
-                            path = nx.shortest_path(G, node, leaf)
-                            max_distance = max(max_distance, len(path) - 1)
-                        except nx.NetworkXNoPath:
-                            pass
-
-                    levels[node] = max_distance
-
-        changed = True
-        while changed:
-            changed = False
-            for u, v in G.edges():
-                if is_fta:
-                    if levels[u] >= levels[v]:
-                        levels[v] = levels[u] + 1
-                        changed = True
-                else:
-                    if levels[u] <= levels[v] and v not in vlk_nodes:
-                        levels[u] = levels[v] + 1
-                        changed = True
-
-        if not is_fta:
-            max_level = max(levels.values()) if levels else 0
-            for node in levels:
-                levels[node] = max_level - levels[node]
-
-            for vlk_name, parent in vlk_nodes.items():
-                levels[vlk_name] = levels[parent] + 1
-
-        nodes_by_level = {}
-        for node, level in levels.items():
-            if level not in nodes_by_level:
-                nodes_by_level[level] = []
-            nodes_by_level[level].append(node)
-
-        pos = {}
-        max_level = max(levels.values()) if levels else 0
-
-        for level in range(max_level + 1):
-            nodes = nodes_by_level.get(level, [])
-
-            if not is_fta and 'vlk_nodes' in locals():
-                vlk_nodes_at_level = [n for n in nodes if n in vlk_nodes.keys()]
-                regular_nodes = [n for n in nodes if n not in vlk_nodes.keys()]
-
-                n_regular = len(regular_nodes)
-                for i, node in enumerate(regular_nodes):
-                    x_pos = (i - (n_regular - 1) / 2) * 3
-                    pos[node] = (x_pos, -level * 2)
-
-                for vlk_name in vlk_nodes_at_level:
-                    parent = vlk_nodes[vlk_name]
-                    parent_pos = pos.get(parent)
-                    if parent_pos:
-                        pos[vlk_name] = (parent_pos[0] + 0.8, -level * 2)
-            else:
-                n_nodes = len(nodes)
-
-                if level > 0 and n_nodes > 1:
-                    def get_parent_avg_x(node):
-                        parents = [p for p in G.predecessors(node) if p in pos]
-                        if parents:
-                            return sum(pos[p][0] for p in parents) / len(parents)
-                        return 0
-
-                    nodes.sort(key=get_parent_avg_x)
-
-                for i, node in enumerate(nodes):
-                    x_pos = (i - (n_nodes - 1) / 2) * 3
-                    pos[node] = (x_pos, -level * 2)
-
-        node_colors = []
-        node_sizes = []
-
-        for node in G.nodes():
-            if is_fta:
-                if node == system_node:
-                    node_colors.append('lightgreen')
-                    node_sizes.append(3000)
-                elif node in root_nodes:
-                    node_colors.append('lightcoral')
-                    node_sizes.append(2000)
-                else:
-                    node_colors.append('lightblue')
-                    node_sizes.append(2000)
-            else:  # RCA
-                if 'vlk_nodes' in locals() and node in vlk_nodes.keys():
-                    node_colors.append('lightyellow')
-                    node_sizes.append(1500)
-                elif node in leaf_nodes:
-                    node_colors.append('lightgreen')
-                    node_sizes.append(2000)
-                else:
-                    node_colors.append('lightblue')
-                    node_sizes.append(2000)
-
-        return G, pos, node_colors, node_sizes
+        build_tree_base(self, connections=connections, is_fta=is_fta)
 
     def build_fault_tree(self):
         """
         Строит дерево отказов FTA на основе текущей схемы сопряжения.
         """
-        connections = self.get_internal_connections()
-        G, pos, node_colors, node_sizes = self._build_tree_base(connections, is_fta=True)
-
-        if G is None:
-            return
-
-        plt.figure(figsize=(16, 12))
-
-        nx.draw_networkx_edges(G, pos=pos,
-                               arrows=True,
-                               arrowstyle='-|>',
-                               arrowsize=10,
-                               width=2,
-                               edge_color='black')
-
-        nx.draw_networkx_nodes(G, pos=pos,
-                               node_color=node_colors,
-                               node_size=node_sizes)
-
-        nx.draw_networkx_labels(G, pos=pos,
-                                font_size=10,
-                                font_weight='bold')
-
-        plt.axis('off')
-
-        tree_window = tk.Toplevel(self.root)
-        tree_window.title("Дерево отказов FTA")
-        tree_window.geometry("1200x900")
-
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        canvas = FigureCanvasTkAgg(plt.gcf(), master=tree_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
-        toolbar = NavigationToolbar2Tk(canvas, tree_window)
-        toolbar.update()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        build_fault_tree(self)
 
     def build_rca_tree(self):
         """
         Строит дерево анализа коренных причин RCA на основе текущей схемы сопряжения.
         """
-        connections = self.get_internal_connections()
-        G, pos, node_colors, node_sizes = self._build_tree_base(connections, is_fta=False)
-
-        if G is None:
-            return
-
-        plt.figure(figsize=(16, 12))
-
-        nx.draw_networkx_edges(G, pos=pos,
-                               arrows=True,
-                               arrowstyle='-|>',
-                               arrowsize=10,
-                               width=2,
-                               edge_color='black')
-
-        nx.draw_networkx_nodes(G, pos=pos,
-                               node_color=node_colors,
-                               node_size=node_sizes)
-
-        nx.draw_networkx_labels(G, pos=pos,
-                                font_size=10,
-                                font_weight='bold')
-
-        plt.axis('off')
-
-        tree_window = tk.Toplevel(self.root)
-        tree_window.title("Дерево анализа коренных причин RCA")
-        tree_window.geometry("1200x900")
-
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        canvas = FigureCanvasTkAgg(plt.gcf(), master=tree_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
-        toolbar = NavigationToolbar2Tk(canvas, tree_window)
-        toolbar.update()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def build_analysis_table(self):
-        """
-        Создает таблицу анализа схемы с метриками I1, I2 и степенью центральности для каждой точки.
-        TODO: исправить логику поиска вершин, некорректно ищет для i1 i2
-        """
-        internal_connections = self.get_internal_connections()
-
-        all_points = set()
-        for start, end in internal_connections:
-            all_points.add(start)
-            all_points.add(end)
-
-        point_labels = sorted(list(all_points))
-        size = len(point_labels)
-        print(point_labels)
-
-        adjacency_matrix = np.zeros((size, size), dtype=int)
-
-        output_points = []
-        in_points = []
-
-        all_items = self.canvas.find_all()
-        for item in all_items:
-            tags = self.canvas.gettags(item)
-            for tag in tags:
-                if tag.startswith('in_') and not tag.endswith('text'):
-                    _, id = tag.split('_')
-                    in_points.append(id)
-
-        for point_id in in_points:
-            node = self.get_node_by_point(point_id)
-
-            if node and node.type == "output":
-                # Получаем текст точки
-                point_text = self.get_point_text(point_id, 'in')
-                output_points.append(point_text)
-
-        metrics = []
-
-        #TODO: тут все ломается, перепроверить
-        for i, point in enumerate(point_labels):
-            node = self.get_node_by_point(point)
-
-            reachable_outputs = 0
-
-            current_matrix = adjacency_matrix.copy()
-            reachable = np.zeros(size, dtype=int)
-
-            for power in range(1, size + 1):
-                reachable = reachable | (current_matrix[i] > 0)
-                current_matrix = np.matmul(current_matrix, adjacency_matrix)
-
-            for j, point_j in enumerate(point_labels):
-                if reachable[j] and point_j in output_points:
-                    reachable_outputs += 1
-
-            reachable_nodes = set()
-            current_node_id = node.id if node else -1
-
-            for j, point_j in enumerate(point_labels):
-                if reachable[j]:
-                    target_node = self.get_node_by_point(point_j)
-                    if target_node and target_node.id > current_node_id:
-                        reachable_nodes.add(target_node.id)
-
-            centrality = 0
-
-            metrics.append({
-                'point': point,
-                'I1': reachable_outputs,
-                'I2': len(reachable_nodes),
-                'centrality': centrality
-            })
-
-        table_window = tk.Toplevel(self.root)
-        table_window.title("Таблица анализа схемы")
-        table_window.geometry("600x800")
-
-        frame = tk.Frame(table_window)
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        vsb = tk.Scrollbar(frame, orient="vertical")
-        hsb = tk.Scrollbar(frame, orient="horizontal")
-
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-
-        table = ttk.Treeview(frame, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        vsb.config(command=table.yview)
-        hsb.config(command=table.xview)
-
-        table['columns'] = ('I1', 'I2', 'centrality')
-
-        table.column('#0', width=150, minwidth=100)
-        table.column('I1', width=100, minwidth=50, anchor=tk.CENTER)
-        table.column('I2', width=100, minwidth=50, anchor=tk.CENTER)
-        table.column('centrality', width=150, minwidth=100, anchor=tk.CENTER)
-
-        table.heading('#0', text='Точка', anchor=tk.CENTER)
-        table.heading('I1', text='I1', anchor=tk.CENTER)
-        table.heading('I2', text='I2', anchor=tk.CENTER)
-        table.heading('centrality', text='Степень центральности', anchor=tk.CENTER)
-
-        for metric in metrics:
-            table.insert('', tk.END, text=metric['point'],
-                         values=(metric['I1'], metric['I2'], metric['centrality']))
-
-        table.pack(fill=tk.BOTH, expand=True)
+        build_rca_tree(self)
 
     def drag_stop(self, event):
         """
@@ -1180,175 +772,26 @@ class FailureSimulator:
         После выбора изначальной отказавшей точки проверяет распространение отказов.
         :param point_id: ID изначальной отказавшей точки
         """
-        if point_id in self.visited_points:
-            return
-        self.visited_points.add(point_id)
-
-        node = self.get_node_by_point(point_id)
-        if node:
-            node_items = self.canvas.find_withtag(f'node_{node.id}')
-            for item in node_items:
-                self.canvas.addtag_withtag('failed', item)
-
-        point_items = self.canvas.find_withtag(f'out_{point_id}') or self.canvas.find_withtag(f'in_{point_id}')
-        current_point_type = 'in' if self.canvas.find_withtag(f'in_{point_id}') else 'out'
-
-        node = self.get_node_by_point(point_id)
-
-        if current_point_type == 'in':
-            for conn in self.connections:
-                start, end = conn
-                if end == point_id:
-                    internal_items = self.canvas.find_withtag(f'internal_conn_in_{node.id}_{start}_{end}')
-                    if internal_items:
-                        for item in internal_items:
-                            self.canvas.addtag_withtag('failed', item)
-                        out_items = self.canvas.find_withtag(f'out_{start}')
-                        for item in out_items:
-                            self.canvas.addtag_withtag('failed', item)
-                        self.mark_failed_elements(start)
-                    else:
-                        conn_items = self.canvas.find_withtag(f'conn_{start}_{end}')
-                        if conn_items:
-                            for item in conn_items:
-                                self.canvas.addtag_withtag('failed', item)
-                            out_items = self.canvas.find_withtag(f'out_{start}')
-                            for item in out_items:
-                                self.canvas.addtag_withtag('failed', item)
-                            self.mark_failed_elements(start)
-
-        else:
-            if node.type == 'aggregate':
-                for conn in self.connections:
-                    if conn[0] == point_id:
-                        conn_items = self.canvas.find_withtag(f'conn_{conn[0]}_{conn[1]}')
-                        if conn_items:
-                            for item in conn_items:
-                                self.canvas.addtag_withtag('failed', item)
-                            connected_point = conn[1]
-                            point_items = self.canvas.find_withtag(f'in_{connected_point}')
-                            for item in point_items:
-                                self.canvas.addtag_withtag('failed', item)
-                            self.mark_failed_elements(connected_point)
-            else:
-                node_items = self.canvas.find_withtag(f'node_{node.id}')
-                for item in node_items:
-                    self.canvas.addtag_withtag('failed', item)
-
-                for conn in self.connections:
-                    if conn[0] == point_id:
-                        conn_items = self.canvas.find_withtag(f'conn_{conn[0]}_{conn[1]}')
-                        for item in conn_items:
-                            self.canvas.addtag_withtag('failed', item)
-                        connected_point = conn[1]
-                        point_items = self.canvas.find_withtag(f'in_{connected_point}')
-                        for item in point_items:
-                            self.canvas.addtag_withtag('failed', item)
-                        self.mark_failed_elements(connected_point)
+        mark_failed_elements(self, point_id=point_id)
 
     def color_failed_elements(self):
         """
         Данный метод вызывается после разметки отказавших элементов для окраски вершин и соединений в красный цвет.
         Вершины также увеличиваются в размерах.
         """
-        all_items = self.canvas.find_all()
-        for item in all_items:
-            if 'failed' in self.canvas.gettags(item):
-                item_type = self.canvas.type(item)
-                if item_type == 'oval':
-                    coords = self.canvas.coords(item)
-                    center_x = (coords[0] + coords[2]) / 2
-                    center_y = (coords[1] + coords[3]) / 2
-                    width = coords[2] - coords[0]
-                    height = coords[3] - coords[1]
-                    new_width = width * 1.5
-                    new_height = height * 1.5
-                    new_coords = [
-                        center_x - new_width / 2,
-                        center_y - new_height / 2,
-                        center_x + new_width / 2,
-                        center_y + new_height / 2
-                    ]
-                    self.canvas.coords(item, *new_coords)
-                    self.canvas.itemconfig(item, fill='red')
-                elif item_type == 'polygon':
-                    self.canvas.itemconfig(item, outline='red', width=2)
-                elif item_type == 'line':
-                    self.canvas.itemconfig(item, fill='red', width=2)
+        color_failed_elements(self)
 
     def set_failure(self):
         """
         Обработчик клика мыши в состоянии установки отказа.
         """
-        self.previous_click_handler = self.canvas.bind('<Button-1>')
-        self.canvas.unbind('<Button-1>')
-        self.failure_mode = True
-        self.root.config(cursor="crosshair")
-        self.visited_points = set()
-
-        def handle_failure_click(event):
-            if not self.failure_mode:
-                return
-
-            clicked_items = self.canvas.find_closest(event.x, event.y)
-            if not clicked_items:
-                return
-
-            tags = self.canvas.gettags(clicked_items[0])
-            for tag in tags:
-                if tag.startswith('out_'):
-                    point_id = tag[4:]
-                    self.visited_points.clear()
-                    self.mark_failed_elements(point_id, True)
-                    self.color_failed_elements()
-
-                    self.failure_mode = False
-                    self.root.config(cursor="")
-                    self.canvas.bind('<Button-1>', self.canvas_click)
-                    return
-
-        self.canvas.bind('<Button-1>', handle_failure_click)
+        set_failure(self)
 
     def reset_failures(self):
         """
         Сбрасывает все отказавшие элементы.
         """
-        failed_items = self.canvas.find_withtag('failed')
-        for item in failed_items:
-            tags = list(self.canvas.gettags(item))
-            tags.remove('failed')
-            self.canvas.dtag(item, 'failed')
-            self.canvas.itemconfig(item, tags=tags)
-
-            item_type = self.canvas.type(item)
-
-            if item_type == 'oval':
-                tags = self.canvas.gettags(item)
-                for tag in tags:
-                    if tag.startswith('out_'):
-                        self.canvas.itemconfig(item, fill='red')
-                    elif tag.startswith('in_'):
-                        self.canvas.itemconfig(item, fill='green')
-
-                coords = self.canvas.coords(item)
-                center_x = (coords[0] + coords[2]) / 2
-                center_y = (coords[1] + coords[3]) / 2
-                new_coords = [
-                    center_x - 5,
-                    center_y - 5,
-                    center_x + 5,
-                    center_y + 5
-                ]
-                self.canvas.coords(item, *new_coords)
-
-            elif item_type == 'polygon':
-                # Reset node appearance
-                self.canvas.itemconfig(item, outline='#999999', width=2)
-
-            elif item_type == 'line':
-                # Reset connection appearance
-                self.canvas.itemconfig(item, fill='orange', width=3)
-
+        reset_failures(self)
 
     def reset_canvas(self):
         """
