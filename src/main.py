@@ -58,6 +58,9 @@ class FailureSimulator:
         self.root = tk.Tk()
         self.root.title("Структурные модели отказов")
 
+        self.adjacency_matrix = None
+        self.point_labels = None
+
         self.nodes = []
         self.connections = []
         self.failed_points = set()
@@ -109,7 +112,7 @@ class FailureSimulator:
         graph_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label='Графы', menu=graph_menu)
         graph_menu.add_command(label='Матрица смежности', command=self.show_adjacency_matrix)
-        graph_menu.add_command(label='Меры важности узлов')
+        graph_menu.add_command(label='Меры важности узлов', command=self.build_analysis_table)
         graph_menu.add_command(label='Дерево отказов FTA', command=self.build_fault_tree)
         graph_menu.add_command(label='Дерево анализа коренных причин RCA', command=self.build_rca_tree)
 
@@ -707,6 +710,9 @@ class FailureSimulator:
         Создает новое окно с визуализацией связей между точками.
         """
         show_adjacency_matrix(self)
+
+    def build_analysis_table(self):
+        build_analysis_table(self)
 
     def build_tree_base(self, connections, is_fta=True):
         """
