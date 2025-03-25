@@ -88,14 +88,11 @@ def build_analysis_table(simulator):
     Создает таблицу анализа схемы с метриками I1, I2 и степенью центральности для каждой точки.
     TODO: исправить логику поиска вершин, некорректно ищет для i1 i2
     """
-    # Получаем матрицу смежности, используя предоставленную функцию
     build_adjacency_matrix(simulator)
 
-    # Получаем все точки из сохраненных данных
     point_labels = simulator.point_labels
     size = len(point_labels)
 
-    # Определяем выходные точки (точки на узлах типа output)
     output_points = []
     for item in simulator.canvas.find_all():
         tags = simulator.canvas.gettags(item)
@@ -108,53 +105,39 @@ def build_analysis_table(simulator):
 
     print(output_points)
 
-    # Индексы выходных точек в матрице смежности
     output_indices = [point_labels.index(point) for point in output_points if point in point_labels]
 
-    # Вычисляем метрики для каждой точки
     metrics = []
     for i, point in enumerate(point_labels):
-        # Вычисляем достижимость из текущей точки (используя степени матрицы смежности)
         reachable = np.zeros(size, dtype=int)
         current_matrix = simulator.adjacency_matrix.copy()
 
-        # Проверяем достижимость через все возможные пути (степени матрицы)
         for power in range(1, size + 1):
             reachable = reachable | (current_matrix[i] > 0)
             current_matrix = np.matmul(current_matrix, simulator.adjacency_matrix)
 
-        # I1: количество достижимых выходных точек
         i1_value = sum(1 for j in output_indices if reachable[j])
 
-        # I2: общее количество достижимых точек
         i2_value = np.sum(reachable)
 
-        # Расчет степени центральности:
-        # 1. Количество вершин, в которые можно попасть из текущей (исходящие связи)
         outgoing_connections = np.sum(simulator.adjacency_matrix[i] > 0)
 
-        # 2. Количество вершин, из которых можно попасть в текущую (входящие связи)
-        # Для этого транспонируем матрицу смежности
         transposed_matrix = simulator.adjacency_matrix.T
         incoming_connections = np.sum(transposed_matrix[i] > 0)
 
-        # 3. Суммарная степень центральности
         centrality = outgoing_connections + incoming_connections
 
-        # Добавляем метрики в список
         metrics.append({
             'point': point,
             'I1': i1_value,
             'I2': i2_value,
-            'centrality': centrality  # Пока не считаем степень центральности
+            'centrality': centrality  
         })
 
-    # Создаем окно для отображения таблицы
     table_window = tk.Toplevel(simulator.root)
     table_window.title("Таблица анализа схемы")
     table_window.geometry("600x800")
 
-    # Создаем фрейм с прокруткой
     frame = tk.Frame(table_window)
     frame.pack(fill=tk.BOTH, expand=True)
 
@@ -163,25 +146,21 @@ def build_analysis_table(simulator):
     vsb.pack(side=tk.RIGHT, fill=tk.Y)
     hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
-    # Создаем таблицу
     table = ttk.Treeview(frame, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
     vsb.config(command=table.yview)
     hsb.config(command=table.xview)
 
-    # Настраиваем столбцы
     table['columns'] = ('I1', 'I2', 'centrality')
     table.column('#0', width=150, minwidth=100)
     table.column('I1', width=100, minwidth=50, anchor=tk.CENTER)
     table.column('I2', width=100, minwidth=50, anchor=tk.CENTER)
     table.column('centrality', width=150, minwidth=100, anchor=tk.CENTER)
 
-    # Настраиваем заголовки
     table.heading('#0', text='Точка', anchor=tk.CENTER)
     table.heading('I1', text='I1', anchor=tk.CENTER)
     table.heading('I2', text='I2', anchor=tk.CENTER)
     table.heading('centrality', text='Степень центральности', anchor=tk.CENTER)
 
-    # Заполняем таблицу данными
     for metric in metrics:
         table.insert('', tk.END, text=metric['point'],
                      values=(metric['I1'], metric['I2'], metric['centrality']))
